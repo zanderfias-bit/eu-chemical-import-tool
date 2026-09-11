@@ -1,22 +1,43 @@
 import re
 
 
-def validate_cas(cas):
+CAS_PATTERN = re.compile(
+    r"^\d{2,7}-\d{2}-\d$"
+)
 
-    cas = cas.strip()
 
-    pattern = r"^\d{2,7}-\d{2}-\d$"
+def validate_cas(cas_number):
+    """
+    Validate both the CAS number format and checksum.
 
-    if not re.match(pattern, cas):
+    Example of a valid CAS number:
+    110-94-1
+    """
+
+    if not cas_number:
         return False
 
-    body, checksum = cas.rsplit("-", 1)
+    cas_number = cas_number.strip().replace(" ", "")
+
+    if not CAS_PATTERN.fullmatch(cas_number):
+        return False
+
+    body, check_digit_text = cas_number.rsplit(
+        "-",
+        1,
+    )
 
     digits = body.replace("-", "")
+    check_digit = int(check_digit_text)
 
-    total = 0
+    calculated_total = 0
 
-    for i, digit in enumerate(reversed(digits), start=1):
-        total += int(digit) * i
+    for position, digit in enumerate(
+        reversed(digits),
+        start=1,
+    ):
+        calculated_total += int(digit) * position
 
-    return total % 10 == int(checksum)
+    calculated_check_digit = calculated_total % 10
+
+    return calculated_check_digit == check_digit
