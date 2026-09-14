@@ -3,6 +3,8 @@ from playwright.sync_api import sync_playwright
 
 def search_echa(cas_number):
 
+    results = []
+
     with sync_playwright() as p:
 
         browser = p.chromium.launch(
@@ -18,16 +20,18 @@ def search_echa(cas_number):
 
         page.wait_for_timeout(3000)
 
-        # Legal notice accepteren
+        # legal notice accepteren
+        try:
+            page.locator(
+                'label[for="legal-notice"]'
+            ).click()
 
-        page.locator(
-            'label[for="legal-notice"]'
-        ).click()
+            page.wait_for_timeout(1000)
 
-        page.wait_for_timeout(1000)
+        except Exception:
+            pass
 
-        # Zoeken
-
+        # zoeken
         search_field = page.locator(
             'input[name="searchText"]'
         )
@@ -38,18 +42,45 @@ def search_echa(cas_number):
 
         search_field.press("Enter")
 
-        page.wait_for_timeout(8000)
+        page.wait_for_timeout(5000)
 
-        table = page.locator("table")
+        rows = page.locator("table tbody tr")
 
-        rows = table.locator("tr")
+        count = rows.count()
 
-        for i in range(rows.count()):
+        for i in range(count):
 
-            print("ROW", i)
+            row = rows.nth(i)
 
-            print(
-                rows.nth(i).inner_text()
-            )
+            cells = row.locator("td")
 
-            print("-" * 50)
+            if cells.count() < 3:
+                continue
+
+            try:
+
+                name = cells.nth(0).inner_text().strip()
+
+                ec_number = cells.nth(1).inner_text().strip()
+
+                cas = cells.nth(2).inner_text().strip()
+
+                link = row.locator("a").first
+
+                url = link.get_attribute("href")
+
+                results.append(
+                    {
+                        "Name": name,
+                        "EC Number": ec_number,
+                        "CAS Number": cas,
+                        "URL": url
+                    }
+                )
+
+            except Exception:
+                continue
+
+        browser.close()
+
+    return results
