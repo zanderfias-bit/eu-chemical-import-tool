@@ -4,6 +4,7 @@ import pandas as pd
 from utils.cas_validator import validate_cas
 from services.echa_search import search_echa
 from services.echa_detail import get_echa_detail
+from services.ecics_lookup import get_goods_code
 
 
 # --------------------------------------------------
@@ -164,6 +165,52 @@ if len(st.session_state.search_results) > 0:
     )
 
     selected_url = selected_row["URL"]
+
+    # --------------------------------------------------
+    # AUTOMATIC ECICS LOOKUP
+    # --------------------------------------------------
+
+    with st.spinner(
+        "Searching ECICS..."
+    ):
+
+        ecics_result = get_goods_code(
+            selected_row["EC Number"]
+        )
+
+    if ecics_result["success"]:
+
+        st.subheader(
+            "ECICS Information"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.write(
+                f"Goods Code: {ecics_result['goods_code']}"
+            )
+
+            st.write(
+                f"CUS Number: {ecics_result['cus_number']}"
+            )
+
+        with col2:
+
+            st.write(
+                f"CAS Number: {ecics_result['cas_number']}"
+            )
+
+            st.write(
+                f"Substance Name: {ecics_result['substance_name']}"
+            )
+
+    else:
+
+        st.warning(
+            ecics_result["message"]
+        )
 
 
 # --------------------------------------------------
