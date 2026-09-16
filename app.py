@@ -7,6 +7,7 @@ from services.echa_detail import get_echa_detail
 from services.ecics_lookup import get_goods_code
 
 
+
 # --------------------------------------------------
 # PAGE SETTINGS
 # --------------------------------------------------
@@ -212,7 +213,7 @@ if len(st.session_state.search_results) > 0:
             ecics_result["message"]
         )
 
-
+    
 # --------------------------------------------------
 # NEXT STEP
 # --------------------------------------------------
