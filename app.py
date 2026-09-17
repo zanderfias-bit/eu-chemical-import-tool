@@ -5,6 +5,7 @@ from utils.cas_validator import validate_cas
 from services.echa_search import search_echa
 from services.echa_detail import get_echa_detail
 from services.ecics_lookup import get_goods_code
+from services.taric_lookup import get_taric
 
 
 
@@ -212,6 +213,51 @@ if len(st.session_state.search_results) > 0:
         st.warning(
             ecics_result["message"]
         )
+    # --------------------------------------------------
+    # AUTOMATIC TARIC LOOKUP
+    # --------------------------------------------------
+
+    with st.spinner(
+        "Searching TARIC..."
+    ):
+
+        taric_result = get_taric(
+            ecics_result["goods_code"],
+            country
+        )
+
+    st.subheader(
+        "TARIC Information"
+    )
+
+    if taric_result["success"]:
+
+        st.write(
+            f"Country: {country}"
+        )
+
+        st.write(
+            f"Goods Code: {ecics_result['goods_code']}"
+        )
+
+        st.write(
+            f"Tables Found: {taric_result['tables_found']}"
+        )
+
+        for table in taric_result["tables"]:
+
+            st.text_area(
+                f"Table {table['table_number']}",
+                table["content"],
+                height=250
+            )
+
+    else:
+
+        st.warning(
+            taric_result["message"]
+        )
+
 
     
 # --------------------------------------------------

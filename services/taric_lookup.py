@@ -25,7 +25,6 @@ def get_taric(goods_code, country):
     country_code = COUNTRY_CODES.get(country)
 
     if not country_code:
-
         return {
             "success": False,
             "message": f"Country '{country}' not supported"
@@ -76,24 +75,15 @@ def get_taric(goods_code, country):
 
         tables = page.locator("table")
 
-        print("=" * 80)
-        print("TARIC URL")
-        print(taric_url)
-
-        print("=" * 80)
-        print("TABLES FOUND")
-        print(tables.count())
+        tables_found = tables.count()
 
         table_data = []
 
-        for i in range(tables.count()):
+        for i in range(tables_found):
 
             try:
 
-                table_text = (
-                    tables.nth(i)
-                    .inner_text()
-                )
+                table_text = tables.nth(i).inner_text()
 
                 table_data.append(
                     {
@@ -102,14 +92,19 @@ def get_taric(goods_code, country):
                     }
                 )
 
-            except Exception:
-                pass
+            except Exception as e:
+
+                print(
+                    f"Table {i} error: {e}"
+                )
+
+        result = {
+            "success": True,
+            "taric_url": taric_url,
+            "tables_found": tables_found,
+            "tables": table_data
+        }
 
         browser.close()
 
-        return {
-            "success": True,
-            "taric_url": taric_url,
-            "tables_found": tables.count(),
-            "tables": table_data
-        }
+        return result
