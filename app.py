@@ -218,12 +218,13 @@ if len(st.session_state.search_results) > 0:
     # --------------------------------------------------
 
     with st.spinner(
-        "Searching TARIC..."
+        "Building TARIC URL..."
     ):
 
         taric_result = get_taric(
             ecics_result["goods_code"],
-            country
+            country,
+            selected_row["CAS Number"]
         )
 
     st.subheader(
@@ -233,23 +234,35 @@ if len(st.session_state.search_results) > 0:
     if taric_result["success"]:
 
         st.write(
-            f"Country: {country}"
+            f"Country of Origin: {country}"
         )
 
         st.write(
             f"Goods Code: {ecics_result['goods_code']}"
         )
 
-        st.write(
-            f"Tables Found: {taric_result['tables_found']}"
+        st.markdown(
+            f"{taric_result['taric_url']}"
         )
 
-        for table in taric_result["tables"]:
+        st.code(
+            taric_result["taric_url"],
+            language="text"
+        )
+
+        if "selected_taric_code" in taric_result:
+
+            st.write(
+                f"Selected TARIC Code: "
+                f"{taric_result['selected_taric_code']}"
+            )
+
+        if "measure_text" in taric_result:
 
             st.text_area(
-                f"Table {table['table_number']}",
-                table["content"],
-                height=250
+                "TARIC Measures",
+                taric_result["measure_text"],
+                height=800
             )
 
     else:
@@ -258,6 +271,15 @@ if len(st.session_state.search_results) > 0:
             taric_result["message"]
         )
 
+        if "debug_links" in taric_result:
+
+            st.subheader(
+                "Debug Links"
+            )
+
+            for link in taric_result["debug_links"]:
+
+                st.write(link)
 
     
 # --------------------------------------------------

@@ -20,7 +20,7 @@ COUNTRY_CODES = {
 }
 
 
-def get_taric(goods_code, country):
+def get_taric(goods_code, country, cas_number):
 
     country_code = COUNTRY_CODES.get(country)
 
@@ -74,37 +74,199 @@ def get_taric(goods_code, country):
         page.wait_for_timeout(5000)
 
         tables = page.locator("table")
+        # --------------------------------------------------
+        # GET PAGE CONTENT
+        # --------------------------------------------------
 
-        tables_found = tables.count()
+        body_text = page.locator("body").inner_text()
 
-        table_data = []
+        print("=" * 80)
+        print("SEARCHING CAS")
+        print(cas_number)
 
-        for i in range(tables_found):
+        # --------------------------------------------------
+        # FIND GOODS CODE LINK
+        # --------------------------------------------------
 
-            try:
-
-                table_text = tables.nth(i).inner_text()
-
-                table_data.append(
-                    {
-                        "table_number": i,
-                        "content": table_text[:5000]
-                    }
-                )
-
-            except Exception as e:
-
-                print(
-                    f"Table {i} error: {e}"
-                )
+        body_text = page.locator("body").inner_text()
 
         result = {
             "success": True,
-            "taric_url": taric_url,
-            "tables_found": tables_found,
-            "tables": table_data
+            "body_text": body_text,
+            "taric_url": page.url
         }
 
         browser.close()
 
+        return {
+            "success": True,
+            "taric_url": taric_url,
+            "goods_code": goods_code,
+            "country": country
+        }
+
+        links_found = links.count()
+
+        print("=" * 80)
+        print("ALL LINKS FOUND")
+        print("=" * 80)
+
+        for i in range(links_found):
+
+            try:
+
+                text = links.nth(i).inner_text().strip()
+
+                href = links.nth(i).get_attribute("href")
+
+                if text:
+
+                    print(
+                        f"{i} | {text}"
+                    )
+
+                    print(
+                        f"HREF: {href}"
+                    )
+
+                    print("-" * 40)
+
+            except Exception as e:
+
+                print(e)
+
+        selected_link = None
+        selected_code = None
+
+        # eerst alle links met goederencodes verzamelen
+        goods_links = []
+
+        for i in range(links_found):
+
+            try:
+
+                text = links.nth(i).inner_text().strip()
+
+                # voorbeeld:
+                # 2917 19 80 55
+                # 2917 19 80 90
+
+                if text and text[0].isdigit():
+
+                    goods_links.append(
+                        {
+                            "index": i,
+                            "code": text,
+                            "locator": links.nth(i)
+                        }
+                    )
+
+            except Exception:
+                pass
+
+        # --------------------------------------------------
+        # ZOEK CAS IN PAGINA
+        # --------------------------------------------------
+
+        cas_found = False
+
+        for i in range(links_found):
+
+            try:
+
+                text = links.nth(i).inner_text()
+
+                if cas_number in text:
+
+                    cas_found = True
+
+                    print(
+                        f"CAS FOUND IN: {text}"
+                    )
+
+                    # neem de vorige goederencode
+                    for g in reversed(goods_links):
+
+                        if g["index"] < i:
+
+                            selected_link = g["locator"]
+
+                            selected_code = g["code"]
+
+                            break
+
+                    break
+
+            except Exception:
+                pass
+
+        # --------------------------------------------------
+        # CAS NIET GEVONDEN
+        # GEBRUIK LAATSTE 'OTHER'
+        # --------------------------------------------------
+
+        if selected_link is None:
+
+            print(
+                "CAS NOT FOUND - USING LAST OTHER"
+            )
+
+            for i in range(links_found):
+
+                try:
+
+                    text = links.nth(i).inner_text().strip()
+
+                    if text.lower() == "other":
+
+                        # neem voorgaande goederenlink
+                        for g in reversed(goods_links):
+
+                            if g["index"] < i:
+
+                                selected_link = g["locator"]
+
+                                selected_code = g["code"]
+
+                                break
+
+                except Exception:
+                    pass
+
+        # --------------------------------------------------
+        # OPEN TARIC DETAIL
+        # --------------------------------------------------
+
+        if selected_link is not None:
+
+            print(
+                f"CLICKING {selected_code}"
+            )
+
+            selected_link.click()
+
+            page.wait_for_timeout(5000)
+
+            measure_text = page.locator(
+                "body"
+            ).inner_text()
+
+            result = {
+                "success": True,
+                "selected_taric_code": selected_code,
+                "taric_url": page.url,
+                "measure_text": measure_text
+            }
+
+        else:
+
+            result = {
+                "success": False,
+                "message":
+                    "No matching CAS or Other entry found"
+            }
+
+        browser.close()
+
         return result
+
