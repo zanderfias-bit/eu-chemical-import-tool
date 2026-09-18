@@ -8,11 +8,25 @@ from services.ecics_lookup import get_goods_code
 from services.taric_lookup import get_taric
 
 import os
+import subprocess
 import streamlit as st
 
-st.write("Files in root:")
+st.write("Installing Playwright browser...")
 
-st.write(os.listdir("."))
+if not os.path.exists("/home/appuser/.cache/ms-playwright"):
+    result = subprocess.run(
+        ["python", "-m", "playwright", "install", "chromium"],
+        capture_output=True,
+        text=True
+    )
+
+    st.text(result.stdout)
+    st.text(result.stderr)
+
+st.write(
+    "Browser cache exists:",
+    os.path.exists("/home/appuser/.cache/ms-playwright")
+)
 
 # --------------------------------------------------
 # PAGE SETTINGS
