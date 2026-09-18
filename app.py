@@ -7,26 +7,26 @@ from services.echa_detail import get_echa_detail
 from services.ecics_lookup import get_goods_code
 from services.taric_lookup import get_taric
 
-import os
-import subprocess
 import streamlit as st
+import sys
 
-st.write("Installing Playwright browser...")
+st.write("Python executable:")
+st.code(sys.executable)
+
+import os
+import sys
+import subprocess
 
 if not os.path.exists("/home/appuser/.cache/ms-playwright"):
+
     result = subprocess.run(
-        ["python", "-m", "playwright", "install", "chromium"],
+        [sys.executable, "-m", "playwright", "install", "chromium"],
         capture_output=True,
         text=True
     )
 
     st.text(result.stdout)
     st.text(result.stderr)
-
-st.write(
-    "Browser cache exists:",
-    os.path.exists("/home/appuser/.cache/ms-playwright")
-)
 
 # --------------------------------------------------
 # PAGE SETTINGS
