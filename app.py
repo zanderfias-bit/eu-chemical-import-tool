@@ -7,7 +7,12 @@ from services.echa_detail import get_echa_detail
 from services.ecics_lookup import get_goods_code
 from services.taric_lookup import get_taric
 
+import os
+import streamlit as st
 
+st.write("Files in root:")
+
+st.write(os.listdir("."))
 
 # --------------------------------------------------
 # PAGE SETTINGS
