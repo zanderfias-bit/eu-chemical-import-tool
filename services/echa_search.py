@@ -13,14 +13,20 @@ def search_echa(cas_number):
             args=[
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--single-process",
-                "--disable-extensions"
+                "--disable-dev-shm-usage"
             ]
         )
         print(browser.version)
-        page = browser.new_page()
+        context = browser.new_context(
+            viewport={
+                "width": 1280,
+                "height": 900
+            },
+            locale="en-US"
+        )
+
+        page = context.new_page()
+
 
         page.goto(
             "https://example.com"
@@ -29,7 +35,7 @@ def search_echa(cas_number):
         print(page.title())
         browser.on(
             "disconnected",
-            lambda: st.write("BROWSER DISCONNECTED")
+            lambda: print("BROWSER DISCONNECTED")
         )
         st.write("Browser launched")
         page = browser.new_page()
