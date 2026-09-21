@@ -12,7 +12,11 @@ def search_echa(cas_number):
             headless=True,
             args=[
                 "--no-sandbox",
-                "--disable-dev-shm-usage"
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--single-process",
+                "--disable-extensions"
             ]
         )
         st.write("Browser launched")
@@ -22,6 +26,14 @@ def search_echa(cas_number):
         page.goto(
             "https://chem.echa.europa.eu/",
             timeout=60000
+        )
+        st.write("URL:", page.url)
+        st.write("TITLE:", page.title())
+
+        html = page.content()
+
+        st.write(
+            html[:2000]
         )
         st.write("ECHA loaded")
 
