@@ -19,6 +19,11 @@ def search_echa(cas_number):
                 "--disable-extensions"
             ]
         )
+        
+        browser.on(
+            "disconnected",
+            lambda: st.write("BROWSER DISCONNECTED")
+        )
         st.write("Browser launched")
         page = browser.new_page()
         
