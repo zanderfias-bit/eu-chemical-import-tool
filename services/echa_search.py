@@ -2,7 +2,7 @@ from playwright.sync_api import sync_playwright
 
 
 def search_echa(cas_number):
-
+    st.write("Launching browser...")
     results = []
 
     with sync_playwright() as p:
@@ -14,13 +14,15 @@ def search_echa(cas_number):
                 "--disable-dev-shm-usage"
             ]
         )
-
+        st.write("Browser launched")
         page = browser.new_page()
+        
 
         page.goto(
             "https://chem.echa.europa.eu/",
             timeout=60000
         )
+        st.write("ECHA loaded")
 
         page.wait_for_timeout(3000)
 
@@ -39,6 +41,8 @@ def search_echa(cas_number):
         search_field = page.locator(
             'input[name="searchText"]'
         )
+
+        st.write("Search field found")
 
         search_field.fill(
             cas_number
