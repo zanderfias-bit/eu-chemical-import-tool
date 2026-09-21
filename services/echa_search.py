@@ -57,9 +57,20 @@ def search_echa(cas_number):
 
         st.write("Search field found")
 
-        search_field.fill(
-            cas_number
+        search_field.wait_for(
+            state="visible",
+            timeout=20000
         )
+
+        st.write("Field visible")
+
+        search_field.click()
+
+        st.write("Field clicked")
+
+        search_field.fill(cas_number)
+
+        st.write("Field filled")
 
         search_field.press("Enter")
 
