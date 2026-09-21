@@ -1,4 +1,5 @@
 from playwright.sync_api import sync_playwright
+import streamlit as st
 
 
 def search_echa(cas_number):
