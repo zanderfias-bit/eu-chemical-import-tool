@@ -26,6 +26,34 @@ def search_echa(cas_number):
                 ],
             )
 
+            browser.on(
+                "disconnected",
+                lambda _: print("EVENT: Browser disconnected")
+            )
+
+            context = browser.new_context(
+                viewport={"width": 1280, "height": 900},
+                locale="en-US",
+            )
+
+            context.on(
+                "close",
+                lambda _: print("EVENT: Browser context closed")
+            )
+
+            page = context.new_page()
+
+            page.on(
+                "close",
+                lambda _: print("EVENT: Page closed")
+            )
+
+            page.on(
+                "crash",
+                lambda _: print("EVENT: Page crashed")
+            )
+            
+
             context = browser.new_context(
                 viewport={
                     "width": 1280,
