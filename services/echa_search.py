@@ -3,7 +3,7 @@ import streamlit as st
 
 
 def search_echa(cas_number):
-    st.write("Launching browser...")
+    
     results = []
 
     with sync_playwright() as p:
@@ -16,7 +16,7 @@ def search_echa(cas_number):
                 "--disable-dev-shm-usage"
             ]
         )
-        print(browser.version)
+       
         context = browser.new_context(
             viewport={
                 "width": 1280,
@@ -29,30 +29,11 @@ def search_echa(cas_number):
 
 
         page.goto(
-            "https://example.com"
-        )
-
-        print(page.title())
-        browser.on(
-            "disconnected",
-            lambda: print("BROWSER DISCONNECTED")
-        )
-        st.write("Browser launched")
-        page = browser.new_page()
-        
-
-        page.goto(
             "https://chem.echa.europa.eu/",
             timeout=60000
         )
-        st.write("URL:", page.url)
-        st.write("TITLE:", page.title())
 
-        html = page.content()
 
-        st.write(
-            html[:2000]
-        )
         st.write("ECHA loaded")
 
         page.wait_for_timeout(3000)
@@ -80,15 +61,10 @@ def search_echa(cas_number):
             timeout=20000
         )
 
-        st.write("Field visible")
 
         search_field.click()
 
-        st.write("Field clicked")
-
         search_field.fill(cas_number)
-
-        st.write("Field filled")
 
         search_field.press("Enter")
 

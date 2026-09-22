@@ -66,7 +66,6 @@ def get_echa_detail(relative_url, cas_number):
             if accept_button.count() > 0:
 
 
-
                 accept_button.first.click()
 
                 page.wait_for_timeout(5000)

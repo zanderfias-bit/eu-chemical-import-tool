@@ -7,7 +7,21 @@ from services.echa_detail import get_echa_detail
 from services.ecics_lookup import get_goods_code
 from services.taric_lookup import get_taric
 
-i
+
+
+import os
+import sys
+import subprocess
+
+if not os.path.exists("/home/appuser/.cache/ms-playwright"):
+
+    result = subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        capture_output=True,
+        text=True
+    )
+
+
 
 # --------------------------------------------------
 # PAGE SETTINGS
