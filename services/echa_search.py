@@ -255,7 +255,6 @@ def search_echa(cas_number):
                     if relative_url.startswith("/"):
                         full_url = (
                             f"{ECHA_BASE_URL}"
-                        lative_url}"
                         )
                     else:
                         full_url = relative_url
