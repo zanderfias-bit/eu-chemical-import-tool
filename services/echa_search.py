@@ -42,7 +42,7 @@ def search_echa(cas_number):
                     "--disable-gpu",
                 ],
             )
-
+            print("CHROMIUM STARTED")
             browser.on(
                 "disconnected",
                 lambda _: print(
@@ -87,6 +87,13 @@ def search_echa(cas_number):
             # --------------------------------------------------
             # OPEN ECHA
             # --------------------------------------------------
+            response = page.goto(
+                "https://www.google.com",
+                timeout=30000,
+            )
+
+            print("GOOGLE OPENED")
+            print(page.title())
             response = page.goto(
                 ECHA_URL,
                 wait_until="domcontentloaded",
