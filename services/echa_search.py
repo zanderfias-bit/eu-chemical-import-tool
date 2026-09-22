@@ -132,11 +132,15 @@ def search_echa(cas_number):
 
                 browser = playwright.chromium.launch(
                     headless=True,
+                    chromium_sandbox=False,
                     args=[
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
                         "--disable-dev-shm-usage",
                         "--disable-gpu",
+                        "--disable-software-rasterizer",
+                        "--disable-extensions",
+                        "--disable-background-networking",
+                        "--disable-background-timer-throttling",
+                        "--disable-renderer-backgrounding",
                     ],
                 )
 
