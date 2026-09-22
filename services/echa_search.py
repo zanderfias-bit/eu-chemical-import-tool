@@ -1,112 +1,166 @@
-from playwright.sync_api import sync_playwright
-import streamlit as st
+from playwright.sync_api import (
+    Error as PlaywrightError,
+    TimeoutError as PlaywrightTimeoutError,
+    sync_playwright,
+)
+
+
+ECHA_URL = "https://chem.echa.europa.eu/"
 
 
 def search_echa(cas_number):
-    
     results = []
 
-    with sync_playwright() as p:
+    with sync_playwright() as playwright:
+        browser = None
+        context = None
 
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage"
-            ]
-        )
-       
-        context = browser.new_context(
-            viewport={
-                "width": 1280,
-                "height": 900
-            },
-            locale="en-US"
-        )
-
-        page = context.new_page()
-
-
-        page.goto(
-            "https://chem.echa.europa.eu/",
-            timeout=60000
-        )
-
-
-        st.write("ECHA loaded")
-
-        page.wait_for_timeout(3000)
-
-        # legal notice accepteren
         try:
-            page.locator(
-                'label[for="legal-notice"]'
-            ).click()
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
+            )
 
-            page.wait_for_timeout(1000)
+            context = browser.new_context(
+                viewport={
+                    "width": 1280,
+                    "height": 900,
+                },
+                locale="en-US",
+            )
 
-        except Exception:
-            pass
+            page = context.new_page()
 
-        # zoeken
-        search_field = page.locator(
-            'input[name="searchText"]'
-        )
+            response = page.goto(
+                ECHA_URL,
+                wait_until="domcontentloaded",
+                timeout=60000,
+            )
 
-        st.write("Search field found")
-
-        search_field.wait_for(
-            state="visible",
-            timeout=20000
-        )
-
-
-        search_field.click()
-
-        search_field.fill(cas_number)
-
-        search_field.press("Enter")
-
-        page.wait_for_timeout(5000)
-
-        rows = page.locator("table tbody tr")
-
-        count = rows.count()
-
-        for i in range(count):
-
-            row = rows.nth(i)
-
-            cells = row.locator("td")
-
-            if cells.count() < 3:
-                continue
-
-            try:
-
-                name = cells.nth(0).inner_text().strip()
-
-                ec_number = cells.nth(1).inner_text().strip()
-
-                cas = cells.nth(2).inner_text().strip()
-
-                link = row.locator("a").first
-
-                url = link.get_attribute("href")
-
-                results.append(
-                    {
-                        "Name": name,
-                        "EC Number": ec_number,
-                        "CAS Number": cas,
-                        "URL": url
-                    }
+            if response is not None and response.status >= 400:
+                raise RuntimeError(
+                    f"ECHA returned HTTP status {response.status}."
                 )
 
-            except Exception:
-                continue
+            # Accept the legal notice if it is displayed.
+            try:
+                legal_notice = page.locator(
+                    'label[for="legal-notice"]'
+                )
 
-        browser.close()
+                if legal_notice.count() > 0:
+                    legal_notice.first.click(
+                        timeout=10000
+                    )
 
-    return results
+            except PlaywrightError:
+                # The legal notice may already have been accepted.
+                pass
+
+            search_field = page.locator(
+                'input[name="searchText"]'
+            )
+
+            search_field.wait_for(
+                state="visible",
+                timeout=30000,
+            )
+
+            search_field.fill(cas_number)
+            search_field.press("Enter")
+
+            rows = page.locator("table tbody tr")
+
+            try:
+                rows.first.wait_for(
+                    state="visible",
+                    timeout=30000,
+                )
+            except PlaywrightTimeoutError:
+                return []
+
+            row_count = rows.count()
+
+            for index in range(row_count):
+                row = rows.nth(index)
+                cells = row.locator("td")
+
+                if cells.count() < 3:
+                    continue
+
+                try:
+                    name = (
+                        cells.nth(0)
+                        .inner_text()
+                        .strip()
+                    )
+
+                    ec_number = (
+                        cells.nth(1)
+                        .inner_text()
+                        .strip()
+                    )
+
+                    found_cas = (
+                        cells.nth(2)
+                        .inner_text()
+                        .strip()
+                    )
+
+                    link = row.locator("a").first
+                    relative_url = link.get_attribute("href")
+
+                    if not relative_url:
+                        continue
+
+                    if relative_url.startswith("/"):
+                        full_url = (
+                            "https://chem.echa.europa.eu"
+                            f"{relative_url}"
+                        )
+                    else:
+                        full_url = relative_url
+
+                    results.append(
+                        {
+                            "Name": name,
+                            "EC Number": ec_number,
+                            "CAS Number": found_cas,
+                            "URL": full_url,
+                        }
+                    )
+
+                except PlaywrightError:
+                    continue
+
+            return results
+
+        except PlaywrightTimeoutError as error:
+            raise RuntimeError(
+                "ECHA loaded, but the search interface did not "
+                "become available."
+            ) from error
+
+        except PlaywrightError as error:
+            raise RuntimeError(
+                "Chromium closed unexpectedly while searching ECHA. "
+                "This is normally a browser deployment or resource issue."
+            ) from error
+
+        finally:
+            if context is not None:
+                try:
+                    context.close()
+                except PlaywrightError:
+                    pass
+
+            if browser is not None:
+                try:
+                    browser.close()
+                except PlaywrightError:
+                    pass
