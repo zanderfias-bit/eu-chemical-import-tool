@@ -102,17 +102,30 @@ if st.button(
 
         st.stop()
 
-    with st.spinner(
-        "Searching ECHA..."
-    ):
+    try:
+        with st.spinner("Searching ECHA..."):
+            results = search_echa(cas)
 
-        results = search_echa(cas)
+        st.session_state.search_results = results
 
-    st.session_state.search_results = results
+        if results:
+            st.success(
+                f"{len(results)} result(s) found."
+            )
+        else:
+            st.warning(
+                "ECHA was reached, but no matching result was found."
+            )
 
-    st.success(
-        f"{len(results)} result(s) found."
-    )
+    except RuntimeError as error:
+        st.session_state.search_results = []
+
+        st.error(
+            "The ECHA search could not be completed."
+        )
+
+        st.info(str(error))
+        st.stop()
 
 
 # --------------------------------------------------
