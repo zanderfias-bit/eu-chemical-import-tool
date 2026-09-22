@@ -1,21 +1,38 @@
 from playwright.sync_api import (
     Error as PlaywrightError,
+    TargetClosedError,
     TimeoutError as PlaywrightTimeoutError,
     sync_playwright,
 )
 
 
 ECHA_URL = "https://chem.echa.europa.eu/"
+ECHA_BASE_URL = "https://chem.echa.europa.eu"
 
 
 def search_echa(cas_number):
+    """
+    Search ECHA CHEM using a CAS number.
+
+    Returns:
+        list[dict\]: Matching substances.
+
+    Raises:
+        RuntimeError: If ECHA cannot be reached or Chromium closes.
+    """
+
     results = []
+    cas_number = str(cas_number).strip()
 
     with sync_playwright() as playwright:
         browser = None
         context = None
+        page = None
 
         try:
+            # --------------------------------------------------
+            # LAUNCH CHROMIUM
+            # --------------------------------------------------
             browser = playwright.chromium.launch(
                 headless=True,
                 args=[
@@ -26,34 +43,17 @@ def search_echa(cas_number):
                 ],
             )
 
+            # Temporary diagnostic logging for Streamlit Cloud.
             browser.on(
                 "disconnected",
-                lambda _: print("EVENT: Browser disconnected")
+                lambda _: print(
+                    "PLAYWRIGHT EVENT: Browser disconnected"
+                ),
             )
 
-            context = browser.new_context(
-                viewport={"width": 1280, "height": 900},
-                locale="en-US",
-            )
-
-            context.on(
-                "close",
-                lambda _: print("EVENT: Browser context closed")
-            )
-
-            page = context.new_page()
-
-            page.on(
-                "close",
-                lambda _: print("EVENT: Page closed")
-            )
-
-            page.on(
-                "crash",
-                lambda _: print("EVENT: Page crashed")
-            )
-            
-
+            # --------------------------------------------------
+            # CREATE ONE CONTEXT AND ONE PAGE
+            # --------------------------------------------------
             context = browser.new_context(
                 viewport={
                     "width": 1280,
@@ -62,56 +62,160 @@ def search_echa(cas_number):
                 locale="en-US",
             )
 
+            context.on(
+                "close",
+                lambda _: print(
+                    "PLAYWRIGHT EVENT: Browser context closed"
+                ),
+            )
+
             page = context.new_page()
 
+            page.on(
+                "close",
+                lambda _: print(
+                    "PLAYWRIGHT EVENT: Page closed"
+                ),
+            )
+
+            page.on(
+                "crash",
+                lambda _: print(
+                    "PLAYWRIGHT EVENT: Page crashed"
+                ),
+            )
+
+            # --------------------------------------------------
+            # OPEN ECHA
+            # --------------------------------------------------
             response = page.goto(
                 ECHA_URL,
                 wait_until="domcontentloaded",
                 timeout=60000,
             )
 
-            if response is not None and response.status >= 400:
-                raise RuntimeError(
-                    f"ECHA returned HTTP status {response.status}."
+            print("ECHA navigation completed")
+            print("Current URL:", page.url)
+            print("Page closed:", page.is_closed())
+            print(
+                "Browser connected:",
+                browser.is_connected(),
+            )
+
+            if response is not None:
+                print(
+                    "ECHA HTTP status:",
+                    response.status,
                 )
 
-            # Accept the legal notice if it is displayed.
+                if response.status >= 400:
+                    raise RuntimeError(
+                        "ECHA returned HTTP status "
+                        f"{response.status}."
+                    )
+
+            if page.is_closed():
+                raise RuntimeError(
+                    "The ECHA page closed immediately "
+                    "after navigation."
+                )
+
+            if not browser.is_connected():
+                raise RuntimeError(
+                    "Chromium disconnected immediately "
+                    "after navigation."
+                )
+
+            # --------------------------------------------------
+            # ACCEPT LEGAL NOTICE
+            # --------------------------------------------------
             try:
-                legal_notice = page.locator(
+                legal_notice_checkbox = page.locator(
                     'label[for="legal-notice"]'
                 )
 
-                if legal_notice.count() > 0:
-                    legal_notice.first.click(
-                        timeout=10000
-                    )
+                if legal_notice_checkbox.count() > 0:
+                    if legal_notice_checkbox.first.is_visible():
+                        legal_notice_checkbox.first.click(
+                            timeout=10000
+                        )
 
-            except PlaywrightError:
-                # The legal notice may already have been accepted.
-                pass
+                accept_button = page.get_by_text(
+                    "I Accept the terms",
+                    exact=False,
+                )
 
+                if accept_button.count() > 0:
+                    if accept_button.first.is_visible():
+                        accept_button.first.click(
+                            timeout=10000
+                        )
+
+                page.wait_for_timeout(1000)
+
+            except PlaywrightTimeoutError:
+                print(
+                    "Legal notice was found, but could "
+                    "not be accepted within the timeout."
+                )
+
+            except PlaywrightError as error:
+                print(
+                    "Legal notice handling skipped:",
+                    repr(error),
+                )
+
+            # --------------------------------------------------
+            # FIND SEARCH FIELD
+            # --------------------------------------------------
             search_field = page.locator(
                 'input[name="searchText"]'
-            )
+            ).first
 
             search_field.wait_for(
                 state="visible",
                 timeout=30000,
             )
 
+            if page.is_closed():
+                raise RuntimeError(
+                    "The ECHA page closed before the "
+                    "search could be submitted."
+                )
+
+            # --------------------------------------------------
+            # EXECUTE SEARCH
+            # --------------------------------------------------
             search_field.fill(cas_number)
             search_field.press("Enter")
 
-            rows = page.locator("table tbody tr")
+            # Wait for either results or the page to settle.
+            page.wait_for_load_state(
+                "domcontentloaded",
+                timeout=30000,
+            )
+
+            rows = page.locator(
+                "table tbody tr"
+            )
 
             try:
                 rows.first.wait_for(
                     state="visible",
                     timeout=30000,
                 )
+
             except PlaywrightTimeoutError:
+                print(
+                    "ECHA search completed, but no result "
+                    "rows became visible."
+                )
+
                 return []
 
+            # --------------------------------------------------
+            # EXTRACT RESULTS
+            # --------------------------------------------------
             row_count = rows.count()
 
             for index in range(row_count):
@@ -141,15 +245,17 @@ def search_echa(cas_number):
                     )
 
                     link = row.locator("a").first
-                    relative_url = link.get_attribute("href")
+                    relative_url = link.get_attribute(
+                        "href"
+                    )
 
                     if not relative_url:
                         continue
 
                     if relative_url.startswith("/"):
                         full_url = (
-                            "https://chem.echa.europa.eu"
-                            f"{relative_url}"
+                            f"{ECHA_BASE_URL}"
+                        lative_url}"
                         )
                     else:
                         full_url = relative_url
@@ -163,22 +269,103 @@ def search_echa(cas_number):
                         }
                     )
 
-                except PlaywrightError:
+                except PlaywrightError as error:
+                    print(
+                        "Could not process ECHA result "
+                        f"row {index}:",
+                        repr(error),
+                    )
+
                     continue
 
             return results
 
-        except PlaywrightTimeoutError as error:
+        # --------------------------------------------------
+        # TARGET CLOSED
+        # --------------------------------------------------
+        except TargetClosedError as error:
+            page_was_closed = (
+                page.is_closed()
+                if page is not None
+                else True
+            )
+
+            browser_was_connected = (
+                browser.is_connected()
+                if browser is not None
+                else False
+            )
+
+            print(
+                "ECHA TARGET CLOSED ERROR:",
+                repr(error),
+            )
+
+            print(
+                "Page closed:",
+                page_was_closed,
+            )
+
+            print(
+                "Browser connected:",
+                browser_was_connected,
+            )
+
             raise RuntimeError(
-                "ECHA loaded, but the search interface did not "
-                "become available."
+                "Chromium closed unexpectedly while "
+                "searching ECHA. Check the Streamlit "
+                "Cloud logs for the browser event that "
+                "occurred immediately before this error."
             ) from error
+
+        # --------------------------------------------------
+        # TIMEOUT
+        # --------------------------------------------------
+        except PlaywrightTimeoutError as error:
+            print(
+                "ECHA TIMEOUT ERROR:",
+                repr(error),
+            )
+
+            raise RuntimeError(
+                "ECHA loaded, but the search interface "
+                "did not become available."
+            ) from error
+
+        # --------------------------------------------------
+        # OTHER PLAYWRIGHT ERROR
+        # --------------------------------------------------
+        except PlaywrightError as error:
+            print(
+                "ECHA PLAYWRIGHT ERROR:",
+                repr(error),
+            )
+
+            raise RuntimeError(
+                "The browser encountered an error while "
+                "searching ECHA."
+            ) from error
+
+        # --------------------------------------------------
+        # APPLICATION OR HTTP ERROR
+        # --------------------------------------------------
+        except RuntimeError:
+            raise
 
         except Exception as error:
+            print(
+                "ECHA UNEXPECTED ERROR:",
+                repr(error),
+            )
+
             raise RuntimeError(
-                f"REAL ERROR: {str(error)}"
+                "An unexpected error occurred while "
+                "searching ECHA."
             ) from error
 
+        # --------------------------------------------------
+        # CLEANUP
+        # --------------------------------------------------
         finally:
             if context is not None:
                 try:
