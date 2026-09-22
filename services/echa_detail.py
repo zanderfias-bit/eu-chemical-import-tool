@@ -36,7 +36,12 @@ def get_echa_detail(relative_url, cas_number):
     with sync_playwright() as p:
 
         browser = p.chromium.launch(
-            headless=False
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage"
+            ]
         )
 
         page = browser.new_page()
