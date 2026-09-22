@@ -146,10 +146,9 @@ def search_echa(cas_number):
                 "become available."
             ) from error
 
-        except PlaywrightError as error:
+        except Exception as error:
             raise RuntimeError(
-                "Chromium closed unexpectedly while searching ECHA. "
-                "This is normally a browser deployment or resource issue."
+                f"REAL ERROR: {str(error)}"
             ) from error
 
         finally:
