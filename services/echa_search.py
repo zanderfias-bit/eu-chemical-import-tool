@@ -7,7 +7,7 @@ from playwright.sync_api import (
 )
 
 
-ECHA_URL = "https://chem.echa.europa.eu/"
+ECHA_URL = "https://chem.echa.europa.eu"
 ECHA_BASE_URL = "https://chem.echa.europa.eu"
 BROWSER_TEST_URL = "https://www.google.com/"
 
