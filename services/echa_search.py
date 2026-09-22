@@ -148,6 +148,18 @@ def search_echa(cas_number):
                     "CHECKPOINT 2: Chromium started",
                     flush=True,
                 )
+                print(
+                    "CHROMIUM VERSION:",
+                    browser.version,
+                    flush=True,
+                )
+
+
+                print(
+                    "PLAYWRIGHT CHROMIUM EXECUTABLE:",
+                    playwright.chromium.executable_path,
+                    flush=True,
+                )
 
                 browser.on(
                     "disconnected",
