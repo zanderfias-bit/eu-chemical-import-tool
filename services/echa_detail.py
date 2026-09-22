@@ -33,10 +33,6 @@ def get_echa_detail(relative_url, cas_number):
         f"&pageIndex=1"
     )
 
-    print("=" * 60)
-    print("REACH URL")
-    print(reach_url)
-
     with sync_playwright() as p:
 
         browser = p.chromium.launch(
@@ -69,9 +65,7 @@ def get_echa_detail(relative_url, cas_number):
 
             if accept_button.count() > 0:
 
-                print(
-                    "Legal notice found"
-                )
+
 
                 accept_button.first.click()
 

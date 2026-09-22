@@ -7,26 +7,7 @@ from services.echa_detail import get_echa_detail
 from services.ecics_lookup import get_goods_code
 from services.taric_lookup import get_taric
 
-import streamlit as st
-import sys
-
-st.write("Python executable:")
-st.code(sys.executable)
-
-import os
-import sys
-import subprocess
-
-if not os.path.exists("/home/appuser/.cache/ms-playwright"):
-
-    result = subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "chromium"],
-        capture_output=True,
-        text=True
-    )
-
-    st.text(result.stdout)
-    st.text(result.stderr)
+i
 
 # --------------------------------------------------
 # PAGE SETTINGS
