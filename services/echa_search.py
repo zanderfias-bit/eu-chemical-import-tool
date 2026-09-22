@@ -72,6 +72,7 @@ validate_url(
     "ECHA_BASE_URL",
     ECHA_BASE_URL,
 )
+CODE_VERSION = "ECHA_SEARCH_2026_09_22_V4"
 
 def search_echa(cas_number):
     """
