@@ -1,6 +1,5 @@
 from playwright.sync_api import (
     Error as PlaywrightError,
-    TargetClosedError,
     TimeoutError as PlaywrightTimeoutError,
     sync_playwright,
 )
@@ -15,10 +14,11 @@ def search_echa(cas_number):
     Search ECHA CHEM using a CAS number.
 
     Returns:
-        listMatching substances.
+        A list of matching substances.
 
     Raises:
-        RuntimeError: If ECHA cannot be reached or Chromium closes.
+        RuntimeError:
+            If ECHA cannot be reached or Chromium closes.
     """
 
     results = []
@@ -43,7 +43,6 @@ def search_echa(cas_number):
                 ],
             )
 
-            # Temporary diagnostic logging for Streamlit Cloud.
             browser.on(
                 "disconnected",
                 lambda _: print(
@@ -134,29 +133,33 @@ def search_echa(cas_number):
                     'label[for="legal-notice"]'
                 )
 
-                if legal_notice_checkbox.count() > 0:
-                    if legal_notice_checkbox.first.is_visible():
-                        legal_notice_checkbox.first.click(
-                            timeout=10000
-                        )
+                if (
+                    legal_notice_checkbox.count() > 0
+                    and legal_notice_checkbox.first.is_visible()
+                ):
+                    legal_notice_checkbox.first.click(
+                        timeout=10000
+                    )
 
                 accept_button = page.get_by_text(
                     "I Accept the terms",
                     exact=False,
                 )
 
-                if accept_button.count() > 0:
-                    if accept_button.first.is_visible():
-                        accept_button.first.click(
-                            timeout=10000
-                        )
+                if (
+                    accept_button.count() > 0
+                    and accept_button.first.is_visible()
+                ):
+                    accept_button.first.click(
+                        timeout=10000
+                    )
 
                 page.wait_for_timeout(1000)
 
             except PlaywrightTimeoutError:
                 print(
-                    "Legal notice was found, but could "
-                    "not be accepted within the timeout."
+                    "Legal notice could not be accepted "
+                    "within the timeout."
                 )
 
             except PlaywrightError as error:
@@ -168,6 +171,18 @@ def search_echa(cas_number):
             # --------------------------------------------------
             # FIND SEARCH FIELD
             # --------------------------------------------------
+            if page.is_closed():
+                raise RuntimeError(
+                    "The ECHA page closed before the "
+                    "search field could be located."
+                )
+
+            if not browser.is_connected():
+                raise RuntimeError(
+                    "Chromium disconnected before the "
+                    "search field could be located."
+                )
+
             search_field = page.locator(
                 'input[name="searchText"]'
             ).first
@@ -177,23 +192,11 @@ def search_echa(cas_number):
                 timeout=30000,
             )
 
-            if page.is_closed():
-                raise RuntimeError(
-                    "The ECHA page closed before the "
-                    "search could be submitted."
-                )
-
             # --------------------------------------------------
             # EXECUTE SEARCH
             # --------------------------------------------------
             search_field.fill(cas_number)
             search_field.press("Enter")
-
-            # Wait for either results or the page to settle.
-            page.wait_for_load_state(
-                "domcontentloaded",
-                timeout=30000,
-            )
 
             rows = page.locator(
                 "table tbody tr"
@@ -245,6 +248,7 @@ def search_echa(cas_number):
                     )
 
                     link = row.locator("a").first
+
                     relative_url = link.get_attribute(
                         "href"
                     )
@@ -281,9 +285,12 @@ def search_echa(cas_number):
             return results
 
         # --------------------------------------------------
-        # TARGET CLOSED
+        # PLAYWRIGHT ERROR
+        # Includes TargetClosedError
         # --------------------------------------------------
-        except TargetClosedError as error:
+        except PlaywrightError as error:
+            error_name = type(error).__name__
+
             page_was_closed = (
                 page.is_closed()
                 if page is not None
@@ -297,7 +304,12 @@ def search_echa(cas_number):
             )
 
             print(
-                "ECHA TARGET CLOSED ERROR:",
+                "ECHA PLAYWRIGHT ERROR TYPE:",
+                error_name,
+            )
+
+            print(
+                "ECHA PLAYWRIGHT ERROR:",
                 repr(error),
             )
 
@@ -311,35 +323,13 @@ def search_echa(cas_number):
                 browser_was_connected,
             )
 
-            raise RuntimeError(
-                "Chromium closed unexpectedly while "
-                "searching ECHA. Check the Streamlit "
-                "Cloud logs for the browser event that "
-                "occurred immediately before this error."
-            ) from error
-
-        # --------------------------------------------------
-        # TIMEOUT
-        # --------------------------------------------------
-        except PlaywrightTimeoutError as error:
-            print(
-                "ECHA TIMEOUT ERROR:",
-                repr(error),
-            )
-
-            raise RuntimeError(
-                "ECHA loaded, but the search interface "
-                "did not become available."
-            ) from error
-
-        # --------------------------------------------------
-        # OTHER PLAYWRIGHT ERROR
-        # --------------------------------------------------
-        except PlaywrightError as error:
-            print(
-                "ECHA PLAYWRIGHT ERROR:",
-                repr(error),
-            )
+            if error_name == "TargetClosedError":
+                raise RuntimeError(
+                    "Chromium closed unexpectedly while "
+                    "searching ECHA. Check the Streamlit "
+                    "Cloud logs for the browser event that "
+                    "occurred immediately before the error."
+                ) from error
 
             raise RuntimeError(
                 "The browser encountered an error while "
