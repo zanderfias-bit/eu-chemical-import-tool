@@ -7,10 +7,71 @@ from playwright.sync_api import (
 )
 
 
-ECHA_URL = "https://chem.echa.europa.eu"
-ECHA_BASE_URL = "https://chem.echa.europa.eu"
-BROWSER_TEST_URL = "https://www.google.com/"
+SLASH = chr(47)
+COLON = chr(58)
 
+HTTPS_PREFIX = (
+    "https"
+    + COLON
+    + SLASH
+    + SLASH
+)
+
+ECHA_BASE_URL = (
+    HTTPS_PREFIX
+    + "chem.echa.europa.eu"
+)
+
+ECHA_URL = (
+    ECHA_BASE_URL
+    + SLASH
+)
+
+BROWSER_TEST_URL = (
+    HTTPS_PREFIX
+    + "www.google.com"
+    + SLASH
+)
+
+
+def validate_url(name, value):
+    forbidden_text = (
+        "<a",
+        "</a>",
+        "href=",
+        "target=",
+        "fai-ChatInputEntity",
+        "&quot;",
+        "&gt;",
+        "&lt;",
+    )
+
+    for item in forbidden_text:
+        if item in value:
+            raise ValueError(
+                f"{name} contains invalid HTML: {value!r}"
+            )
+
+    if not value.startswith(HTTPS_PREFIX):
+        raise ValueError(
+            f"{name} is not a valid HTTPS address: {value!r}"
+        )
+
+
+validate_url(
+    "BROWSER_TEST_URL",
+    BROWSER_TEST_URL,
+)
+
+validate_url(
+    "ECHA_URL",
+    ECHA_URL,
+)
+
+validate_url(
+    "ECHA_BASE_URL",
+    ECHA_BASE_URL,
+)
 
 def search_echa(cas_number):
     """
