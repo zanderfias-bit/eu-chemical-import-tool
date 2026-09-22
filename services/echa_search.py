@@ -7,37 +7,56 @@ from playwright.sync_api import (
 )
 
 
-SLASH = chr(47)
-COLON = chr(58)
+# --------------------------------------------------
+# VERSION
+# --------------------------------------------------
+CODE_VERSION = "ECHA_SEARCH_NO_HTML_URL_V7"
 
-HTTPS_PREFIX = (
-    "https"
-    + COLON
-    + SLASH
-    + SLASH
+
+# --------------------------------------------------
+# BUILD URLS WITHOUT LITERAL URL STRINGS
+# --------------------------------------------------
+PROTOCOL = "".join(
+    [
+        "h",
+        "t",
+        "t",
+        "p",
+        "s",
+        chr(58),
+        chr(47),
+        chr(47),
+    ]
 )
 
-ECHA_BASE_URL = (
-    HTTPS_PREFIX
-    + "chem.echa.europa.eu"
+ECHA_BASE_URL = "".join(
+    [
+        PROTOCOL,
+        "chem",
+        chr(46),
+        "echa",
+        chr(46),
+        "europa",
+        chr(46),
+        "eu",
+    ]
 )
 
-ECHA_URL = (
-    ECHA_BASE_URL
-    + SLASH
-)
-
-BROWSER_TEST_URL = (
-    HTTPS_PREFIX
-    + "www.google.com"
-    + SLASH
+ECHA_URL = "".join(
+    [
+        ECHA_BASE_URL,
+        chr(47),
+    ]
 )
 
 
+# --------------------------------------------------
+# URL VALIDATION
+# --------------------------------------------------
 def validate_url(name, value):
-    forbidden_text = (
-        "<a",
-        "</a>",
+    forbidden_fragments = (
+        "<",
+        ">",
         "href=",
         "target=",
         "fai-ChatInputEntity",
@@ -46,21 +65,21 @@ def validate_url(name, value):
         "&lt;",
     )
 
-    for item in forbidden_text:
-        if item in value:
+    for fragment in forbidden_fragments:
+        if fragment in value:
             raise ValueError(
-                f"{name} contains invalid HTML: {value!r}"
+                f"{name} contains copied HTML: {value!r}"
             )
 
-    if not value.startswith(HTTPS_PREFIX):
+    if not value.startswith(PROTOCOL):
         raise ValueError(
             f"{name} is not a valid HTTPS address: {value!r}"
         )
 
 
 validate_url(
-    "BROWSER_TEST_URL",
-    BROWSER_TEST_URL,
+    "ECHA_BASE_URL",
+    ECHA_BASE_URL,
 )
 
 validate_url(
@@ -68,12 +87,10 @@ validate_url(
     ECHA_URL,
 )
 
-validate_url(
-    "ECHA_BASE_URL",
-    ECHA_BASE_URL,
-)
-CODE_VERSION = "ECHA_SEARCH_2026_09_22_V4"
 
+# --------------------------------------------------
+# ECHA SEARCH
+# --------------------------------------------------
 def search_echa(cas_number):
     """
     Search ECHA CHEM using a CAS number.
@@ -84,7 +101,7 @@ def search_echa(cas_number):
     Raises:
         RuntimeError:
             If Chromium cannot start, the browser test fails,
-            ECHA cannot be reached, or the browser closes.
+            ECHA cannot be reached, or Chromium closes.
     """
 
     results = []
@@ -94,12 +111,15 @@ def search_echa(cas_number):
     context = None
     page = None
 
-    try:
-        print("=" * 60, flush=True)
-        print("STARTING ECHA SEARCH", flush=True)
-        print(f"CAS NUMBER: {cas_number}", flush=True)
-        print("=" * 60, flush=True)
+    print("=" * 60, flush=True)
+    print(f"CODE VERSION: {CODE_VERSION}", flush=True)
+    print(f"LOADED MODULE: {__file__}", flush=True)
+    print("STARTING ECHA SEARCH", flush=True)
+    print(f"CAS NUMBER: {cas_number}", flush=True)
+    print(f"ECHA URL VALUE: {ECHA_URL!r}", flush=True)
+    print("=" * 60, flush=True)
 
+    try:
         with sync_playwright() as playwright:
             try:
                 # --------------------------------------------------
@@ -134,7 +154,7 @@ def search_echa(cas_number):
                 )
 
                 # --------------------------------------------------
-                # CREATE ONE CONTEXT
+                # CREATE BROWSER CONTEXT
                 # --------------------------------------------------
                 context = browser.new_context(
                     viewport={
@@ -158,7 +178,7 @@ def search_echa(cas_number):
                 )
 
                 # --------------------------------------------------
-                # CREATE ONE PAGE
+                # CREATE PAGE
                 # --------------------------------------------------
                 page = context.new_page()
 
@@ -184,19 +204,57 @@ def search_echa(cas_number):
                 )
 
                 # --------------------------------------------------
-                # TEST CHROMIUM WITH GOOGLE
+                # BUILD BROWSER TEST ADDRESS LOCALLY
                 # --------------------------------------------------
+                browser_test_url = "".join(
+                    [
+                        "h",
+                        "t",
+                        "t",
+                        "p",
+                        "s",
+                        chr(58),
+                        chr(47),
+                        chr(47),
+                        "w",
+                        "w",
+                        "w",
+                        chr(46),
+                        "g",
+                        "o",
+                        "o",
+                        "g",
+                        "l",
+                        "e",
+                        chr(46),
+                        "c",
+                        "o",
+                        "m",
+                        chr(47),
+                    ]
+                )
+
+                validate_url(
+                    "browser_test_url",
+                    browser_test_url,
+                )
+
                 print(
                     "CHECKPOINT 5: Opening browser test page",
                     flush=True,
                 )
+
                 print(
-                    f"BROWSER_TEST_URL VALUE: {BROWSER_TEST_URL!r}",
+                    "BROWSER TEST VALUE:",
+                    repr(browser_test_url),
                     flush=True,
                 )
 
+                # --------------------------------------------------
+                # TEST CHROMIUM NAVIGATION
+                # --------------------------------------------------
                 test_response = page.goto(
-                    BROWSER_TEST_URL,
+                    browser_test_url,
                     wait_until="domcontentloaded",
                     timeout=30000,
                 )
@@ -205,20 +263,25 @@ def search_echa(cas_number):
                     "CHECKPOINT 6: Browser test navigation completed",
                     flush=True,
                 )
+
                 print(
                     f"BROWSER TEST URL: {page.url}",
                     flush=True,
                 )
+
                 print(
                     f"BROWSER TEST TITLE: {page.title()}",
                     flush=True,
                 )
+
                 print(
                     f"PAGE CLOSED: {page.is_closed()}",
                     flush=True,
                 )
+
                 print(
-                    f"BROWSER CONNECTED: {browser.is_connected()}",
+                    "BROWSER CONNECTED: "
+                    f"{browser.is_connected()}",
                     flush=True,
                 )
 
@@ -237,14 +300,14 @@ def search_echa(cas_number):
 
                 if page.is_closed():
                     raise RuntimeError(
-                        "Chromium started, but the browser page "
-                        "closed during the browser test."
+                        "Chromium started, but the page closed "
+                        "during the browser test."
                     )
 
                 if not browser.is_connected():
                     raise RuntimeError(
-                        "Chromium started, but disconnected during "
-                        "the browser test."
+                        "Chromium started, but disconnected "
+                        "during the browser test."
                     )
 
                 # --------------------------------------------------
@@ -265,20 +328,25 @@ def search_echa(cas_number):
                     "CHECKPOINT 8: ECHA navigation completed",
                     flush=True,
                 )
+
                 print(
                     f"ECHA CURRENT URL: {page.url}",
                     flush=True,
                 )
+
                 print(
                     f"ECHA PAGE TITLE: {page.title()}",
                     flush=True,
                 )
+
                 print(
                     f"PAGE CLOSED: {page.is_closed()}",
                     flush=True,
                 )
+
                 print(
-                    f"BROWSER CONNECTED: {browser.is_connected()}",
+                    "BROWSER CONNECTED: "
+                    f"{browser.is_connected()}",
                     flush=True,
                 )
 
@@ -552,14 +620,13 @@ def search_echa(cas_number):
             except PlaywrightError as error:
                 error_name = type(error).__name__
 
-                print(
-                    "=" * 60,
-                    flush=True,
-                )
+                print("=" * 60, flush=True)
+
                 print(
                     f"PLAYWRIGHT ERROR TYPE: {error_name}",
                     flush=True,
                 )
+
                 print(
                     f"PLAYWRIGHT ERROR: {repr(error)}",
                     flush=True,
@@ -592,10 +659,7 @@ def search_echa(cas_number):
                             flush=True,
                         )
 
-                print(
-                    "=" * 60,
-                    flush=True,
-                )
+                print("=" * 60, flush=True)
 
                 if error_name == "TargetClosedError":
                     raise RuntimeError(
@@ -626,10 +690,8 @@ def search_echa(cas_number):
                 raise
 
             except Exception as error:
-                print(
-                    "=" * 60,
-                    flush=True,
-                )
+                print("=" * 60, flush=True)
+
                 print(
                     "UNEXPECTED ERROR:",
                     repr(error),
@@ -638,10 +700,7 @@ def search_echa(cas_number):
 
                 traceback.print_exc()
 
-                print(
-                    "=" * 60,
-                    flush=True,
-                )
+                print("=" * 60, flush=True)
 
                 raise RuntimeError(
                     "An unexpected error occurred while "
@@ -660,6 +719,7 @@ def search_echa(cas_number):
                 if context is not None:
                     try:
                         context.close()
+
                         print(
                             "CONTEXT CLOSED DURING CLEANUP",
                             flush=True,
@@ -675,6 +735,7 @@ def search_echa(cas_number):
                 if browser is not None:
                     try:
                         browser.close()
+
                         print(
                             "BROWSER CLOSED DURING CLEANUP",
                             flush=True,
