@@ -128,6 +128,10 @@ def search_echa(cas_number):
                     "CHECKPOINT 5: Opening browser test page",
                     flush=True,
                 )
+                print(
+                    f"BROWSER_TEST_URL VALUE: {BROWSER_TEST_URL!r}",
+                    flush=True,
+                )
 
                 test_response = page.goto(
                     BROWSER_TEST_URL,
