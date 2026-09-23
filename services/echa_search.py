@@ -191,6 +191,45 @@ def search_echa(cas_number):
                     timeout=60000,
                 )
 
+                # --------------------------------------------------
+                # ACCEPT LEGAL NOTICE IF PRESENT
+                # --------------------------------------------------
+                try:
+                    accept_button = page.get_by_text(
+                        "I Accept the terms",
+                        exact=False,
+                    ).first
+
+                    if (
+                        accept_button.count() > 0
+                        and accept_button.is_visible(
+                            timeout=5000
+                        )
+                    ):
+                        print(
+                            "Accepting ECHA legal notice",
+                            flush=True,
+                        )
+
+                        accept_button.click(
+                            timeout=10000,
+                        )
+
+                        page.wait_for_load_state(
+                            "networkidle",
+                            timeout=30000,
+                        )
+
+                        page.wait_for_timeout(
+                            2000
+                        )
+
+                except PlaywrightTimeoutError:
+                    pass
+
+                except PlaywrightError:
+                    pass
+
                 if response is not None:
                     if response.status >= 400:
                         raise RuntimeError(
