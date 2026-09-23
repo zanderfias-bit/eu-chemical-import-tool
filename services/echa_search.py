@@ -190,7 +190,7 @@ def search_echa(cas_number):
                     wait_until="domcontentloaded",
                     timeout=60000,
                 )
-                page.wait_for_timeout(8000)
+                page.wait_for_timeout(1500)
 
                 print(
                     "PAGE TITLE:",
@@ -229,7 +229,7 @@ def search_echa(cas_number):
                 # WAIT FOR LEGAL NOTICE
                 # --------------------------------------------------
                 try:
-                    page.wait_for_timeout(5000)
+                    page.wait_for_timeout(1500)
 
                     accept_button = page.get_by_text(
                         "I Accept the terms",
@@ -252,7 +252,7 @@ def search_echa(cas_number):
                             timeout=30000,
                         )
 
-                        page.wait_for_timeout(3000)
+                        page.wait_for_timeout(1500)
 
                 except Exception:
                     pass
@@ -287,7 +287,7 @@ def search_echa(cas_number):
                         )
 
                         page.wait_for_timeout(
-                            2000
+                            1500
                         )
 
                 except PlaywrightTimeoutError:

@@ -27,7 +27,7 @@ def lookup_echa(cas_number):
                 timeout=60000
             )
 
-            page.wait_for_timeout(5000)
+            page.wait_for_timeout(1500)
 
             print("Titel:")
             print(page.title())

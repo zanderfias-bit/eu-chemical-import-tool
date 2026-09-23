@@ -72,7 +72,7 @@ def get_taric(goods_code, country, cas_number):
             timeout=60000
         )
 
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(1500)
 
         tables = page.locator("table")
         # --------------------------------------------------
