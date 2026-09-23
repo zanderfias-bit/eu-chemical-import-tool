@@ -276,69 +276,93 @@ if len(st.session_state.search_results) > 0:
     # AUTOMATIC TARIC LOOKUP
     # --------------------------------------------------
 
-    with st.spinner(
-        "Building TARIC URL..."
+    if (
+        ecics_result.get("success", False)
+        and "goods_code" in ecics_result
     ):
 
-        taric_result = get_taric(
-            ecics_result["goods_code"],
-            country,
-            selected_row["CAS Number"]
+        with st.spinner(
+            "Building TARIC URL..."
+        ):
+
+            taric_result = get_taric(
+                ecics_result["goods_code"],
+                country,
+                selected_row["CAS Number"]
+            )
+
+        st.subheader(
+            "TARIC Information"
         )
 
-    st.subheader(
-        "TARIC Information"
-    )
-
-    if taric_result["success"]:
-
-        st.write(
-            f"Country of Origin: {country}"
-        )
-
-        st.write(
-            f"Goods Code: {ecics_result['goods_code']}"
-        )
-
-        st.markdown(
-            f"{taric_result['taric_url']}"
-        )
-
-        st.code(
-            taric_result["taric_url"],
-            language="text"
-        )
-
-        if "selected_taric_code" in taric_result:
+        if taric_result["success"]:
 
             st.write(
-                f"Selected TARIC Code: "
-                f"{taric_result['selected_taric_code']}"
+                f"Country of Origin: {country}"
             )
 
-        if "measure_text" in taric_result:
-
-            st.text_area(
-                "TARIC Measures",
-                taric_result["measure_text"],
-                height=800
+            st.write(
+                f"Goods Code: {ecics_result['goods_code']}"
             )
+
+            st.markdown(
+                taric_result["taric_url"]
+            )
+
+            st.code(
+                taric_result["taric_url"],
+                language="text"
+            )
+
+            if (
+                "selected_taric_code"
+                in taric_result
+            ):
+                st.write(
+                    f"Selected TARIC Code: "
+                    f"{taric_result['selected_taric_code']}"
+                )
+
+            if (
+                "measure_text"
+                in taric_result
+            ):
+                st.text_area(
+                    "TARIC Measures",
+                    taric_result["measure_text"],
+                    height=800,
+                )
+
+        else:
+
+            st.warning(
+                taric_result["message"]
+            )
+
+            if (
+                "debug_links"
+                in taric_result
+            ):
+                st.subheader(
+                    "Debug Links"
+                )
+
+                for link in taric_result[
+                    "debug_links"
+                ]:
+                    st.write(link)
 
     else:
 
         st.warning(
-            taric_result["message"]
+            "No ECICS goods code found. "
+            "TARIC lookup skipped."
         )
 
-        if "debug_links" in taric_result:
-
-            st.subheader(
-                "Debug Links"
-            )
-
-            for link in taric_result["debug_links"]:
-
-                st.write(link)
+        st.write(
+            "ECICS Result:",
+            ecics_result
+        )
 
     
 # --------------------------------------------------
@@ -394,3 +418,14 @@ else:
     st.warning(
         "No registrants found."
     )
+
+
+if st.button(
+    "Clear Cache"
+):
+    st.cache_data.clear()
+
+    st.success(
+        "Cache cleared."
+    )
+    
