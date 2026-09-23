@@ -310,50 +310,55 @@ if len(st.session_state.search_results) > 0:
 
     
 # --------------------------------------------------
-# NEXT STEP
+# AUTOMATIC ECHA DETAIL LOOKUP
 # --------------------------------------------------
 
-    if st.button(
-        "Open ECHA Detail Page"
-    ):
+with st.spinner(
+    "Loading ECHA registration details..."
+):
 
-        with st.spinner(
-            "Opening detail page..."
-        ):
+    detail = get_echa_detail(
+        selected_url,
+        cas
+    )
 
-            detail = get_echa_detail(
-                selected_url,cas
-            )
+st.subheader(
+    "Detail Page Information"
+)
 
-        st.subheader(
-            "Detail Page Information"
-        )
+st.write(
+    f"Title: {detail['title']}"
+)
 
-        st.write(
-            f"Title: {detail['title']}"
-        )
+st.subheader(
+    "REACH Registrants"
+)
 
-        st.subheader(
-            "REACH Registrants"
-        )
+registrants = detail["registrants"]
 
-        registrants = detail["registrants"]
+if len(registrants) > 0:
 
-        if len(registrants) > 0:
+    df_registrants = pd.DataFrame(
+        registrants
+    )
 
-            df_registrants = pd.DataFrame(
-                registrants
-            )
+    df_registrants = (
+        df_registrants
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
 
-            df_registrants = df_registrants.drop_duplicates()
+    st.success(
+        f"{len(df_registrants)} registrant(s) found."
+    )
 
-            st.dataframe(
-                df_registrants,
-                use_container_width=True
-            )
+    st.dataframe(
+        df_registrants,
+        use_container_width=True
+    )
 
-        else:
+else:
 
-            st.warning(
-                "No registrants found."
-            )
+    st.warning(
+        "No registrants found."
+    )
