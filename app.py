@@ -1,679 +1,359 @@
-import traceback
+import streamlit as st
+import pandas as pd
 
-from playwright.sync_api import (
-    Error as PlaywrightError,
-    TimeoutError as PlaywrightTimeoutError,
-    sync_playwright,
-)
-
-
-# --------------------------------------------------
-# VERSION
-# --------------------------------------------------
-CODE_VERSION = "ECHA_SEARCH_MINIMAL_V8"
+from utils.cas_validator import validate_cas
+from services.echa_search import search_echa
+from services.echa_detail import get_echa_detail
+from services.ecics_lookup import get_goods_code
+from services.taric_lookup import get_taric
 
 
-# --------------------------------------------------
-# BUILD URLS
-# --------------------------------------------------
-# De URL wordt uit delen opgebouwd om te voorkomen dat
-# een chatinterface de URL omzet in HTML tijdens het kopiëren.
-PROTOCOL = "".join(
-    [
-        "h",
-        "t",
-        "t",
-        "p",
-        "s",
-        chr(58),
-        chr(47),
-        chr(47),
-    ]
-)
 
-ECHA_BASE_URL = "".join(
-    [
-        PROTOCOL,
-        "chem",
-        chr(46),
-        "echa",
-        chr(46),
-        "europa",
-        chr(46),
-        "eu",
-    ]
-)
+import os
+import sys
+import subprocess
 
-ECHA_URL = ECHA_BASE_URL + chr(47)
+if not os.path.exists("/home/appuser/.cache/ms-playwright"):
 
-
-# --------------------------------------------------
-# URL VALIDATION
-# --------------------------------------------------
-def validate_url(name, value):
-    """
-    Controleert of een URL geen gekopieerde HTML bevat.
-    """
-
-    forbidden_fragments = (
-        "<",
-        ">",
-        "href=",
-        "target=",
-        "fai-ChatInputEntity",
-        "&lt;",
-        "&gt;",
-        "&quot;",
+    result = subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        capture_output=True,
+        text=True
     )
 
-    for fragment in forbidden_fragments:
-        if fragment in value:
-            raise ValueError(
-                f"{name} contains copied HTML: {value!r}"
-            )
 
-    if not value.startswith(PROTOCOL):
-        raise ValueError(
-            f"{name} is not a valid HTTPS address: {value!r}"
+
+# --------------------------------------------------
+# PAGE SETTINGS
+# --------------------------------------------------
+
+st.set_page_config(
+    page_title="EU Chemical Import Tool",
+    page_icon="🧪",
+    layout="wide"
+)
+
+st.title("🧪 EU Chemical Import Tool")
+
+st.write(
+    "Search ECHA CHEM using a CAS number."
+)
+
+
+# --------------------------------------------------
+# SESSION STATE
+# --------------------------------------------------
+
+if "search_results" not in st.session_state:
+    st.session_state.search_results = []
+
+if "selected_substance" not in st.session_state:
+    st.session_state.selected_substance = None
+
+
+# --------------------------------------------------
+# INPUTS
+# --------------------------------------------------
+
+cas = st.text_input(
+    "CAS Number",
+    placeholder="110-94-1"
+)
+
+country = st.text_input(
+    "Country of Origin",
+    placeholder="China"
+)
+
+
+# --------------------------------------------------
+# SEARCH BUTTON
+# --------------------------------------------------
+
+if st.button(
+    "Search ECHA",
+    type="primary"
+):
+
+    cas = cas.strip()
+    country = country.strip()
+
+    if not cas:
+
+        st.error(
+            "Please enter a CAS number."
         )
 
+        st.stop()
 
-validate_url("ECHA_BASE_URL", ECHA_BASE_URL)
-validate_url("ECHA_URL", ECHA_URL)
+    if not validate_cas(cas):
 
+        st.error(
+            "Invalid CAS number."
+        )
 
-# --------------------------------------------------
-# ECHA SEARCH
-# --------------------------------------------------
-def search_echa(cas_number):
-    """
-    Search ECHA CHEM using a CAS number.
+        st.stop()
 
-    Returns:
-        A list of dictionaries with:
-        - Name
-        - EC Number
-        - CAS Number
-        - URL
+    if not country:
 
-    Raises:
-        RuntimeError:
-            If Chromium cannot start, ECHA cannot be reached,
-            or the browser closes unexpectedly.
-    """
+        st.error(
+            "Please enter the country of origin."
+        )
 
-    results = []
-    cas_number = str(cas_number).strip()
-
-    browser = None
-    context = None
-    page = None
-
-    print("=" * 60, flush=True)
-    print(f"CODE VERSION: {CODE_VERSION}", flush=True)
-    print(f"LOADED MODULE: {__file__}", flush=True)
-    print("STARTING ECHA SEARCH", flush=True)
-    print(f"CAS NUMBER: {cas_number}", flush=True)
-    print(f"ECHA URL VALUE: {ECHA_URL!r}", flush=True)
-    print("=" * 60, flush=True)
+        st.stop()
 
     try:
-        with sync_playwright() as playwright:
-            try:
-                # --------------------------------------------------
-                # LAUNCH CHROMIUM
-                # --------------------------------------------------
-                print(
-                    "CHECKPOINT 1: Launching Chromium",
-                    flush=True,
-                )
-
-                browser = playwright.chromium.launch(
-                    headless=True,
-                    chromium_sandbox=False,
-                    args=[
-                        "--disable-dev-shm-usage",
-                    ],
-                )
-
-                print(
-                    "CHECKPOINT 2: Chromium started",
-                    flush=True,
-                )
-                print(
-                    f"CHROMIUM VERSION: {browser.version}",
-                    flush=True,
-                )
-                print(
-                    "PLAYWRIGHT CHROMIUM EXECUTABLE: "
-                    f"{playwright.chromium.executable_path}",
-                    flush=True,
-                )
-
-                browser.on(
-                    "disconnected",
-                    lambda _: print(
-                        "PLAYWRIGHT EVENT: Browser disconnected",
-                        flush=True,
-                    ),
-                )
-
-                # --------------------------------------------------
-                # CREATE BROWSER CONTEXT
-                # --------------------------------------------------
-                context = browser.new_context(
-                    viewport={
-                        "width": 1280,
-                        "height": 900,
-                    },
-                    locale="en-US",
-                )
-
-                print(
-                    "CHECKPOINT 3: Browser context created",
-                    flush=True,
-                )
-
-                context.on(
-                    "close",
-                    lambda _: print(
-                        "PLAYWRIGHT EVENT: Browser context closed",
-                        flush=True,
-                    ),
-                )
-
-                # --------------------------------------------------
-                # CREATE PAGE
-                # --------------------------------------------------
-                page = context.new_page()
-
-                print(
-                    "CHECKPOINT 4: Browser page created",
-                    flush=True,
-                )
-
-                page.on(
-                    "close",
-                    lambda _: print(
-                        "PLAYWRIGHT EVENT: Page closed",
-                        flush=True,
-                    ),
-                )
-
-                page.on(
-                    "crash",
-                    lambda _: print(
-                        "PLAYWRIGHT EVENT: Page crashed",
-                        flush=True,
-                    ),
-                )
-
-                page.on(
-                    "pageerror",
-                    lambda error: print(
-                        "PLAYWRIGHT EVENT: Page JavaScript error: "
-                        f"{error}",
-                        flush=True,
-                    ),
-                )
-
-                # --------------------------------------------------
-                # OPEN ECHA DIRECTLY
-                # --------------------------------------------------
-                print(
-                    "CHECKPOINT 5: Opening ECHA",
-                    flush=True,
-                )
-
-                response = page.goto(
-                    ECHA_URL,
-                    wait_until="domcontentloaded",
-                    timeout=60000,
-                )
-
-                print(
-                    "CHECKPOINT 6: ECHA navigation completed",
-                    flush=True,
-                )
-                print(
-                    f"ECHA CURRENT URL: {page.url}",
-                    flush=True,
-                )
-                print(
-                    f"ECHA PAGE TITLE: {page.title()}",
-                    flush=True,
-                )
-                print(
-                    f"PAGE CLOSED AFTER NAVIGATION: "
-                    f"{page.is_closed()}",
-                    flush=True,
-                )
-                print(
-                    "BROWSER CONNECTED AFTER NAVIGATION: "
-                    f"{browser.is_connected()}",
-                    flush=True,
-                )
-
-                if response is not None:
-                    print(
-                        f"ECHA HTTP STATUS: {response.status}",
-                        flush=True,
-                    )
-
-                    if response.status >= 400:
-                        raise RuntimeError(
-                            "ECHA returned HTTP status "
-                            f"{response.status}."
-                        )
-
-                if page.is_closed():
-                    raise RuntimeError(
-                        "The ECHA page closed immediately "
-                        "after navigation."
-                    )
-
-                if not browser.is_connected():
-                    raise RuntimeError(
-                        "Chromium disconnected immediately "
-                        "after opening ECHA."
-                    )
-
-                # --------------------------------------------------
-                # WAIT FOR ECHA APPLICATION
-                # --------------------------------------------------
-                print(
-                    "CHECKPOINT 7: Waiting for ECHA application",
-                    flush=True,
-                )
-
-                page.wait_for_timeout(3000)
-
-                # --------------------------------------------------
-                # ACCEPT LEGAL NOTICE
-                # --------------------------------------------------
-                print(
-                    "CHECKPOINT 8: Checking legal notice",
-                    flush=True,
-                )
-
-                try:
-                    accept_button = page.get_by_text(
-                        "I Accept the terms",
-                        exact=False,
-                    ).first
-
-                    if accept_button.is_visible(timeout=5000):
-                        accept_button.click(timeout=10000)
-
-                        print(
-                            "LEGAL NOTICE ACCEPTED",
-                            flush=True,
-                        )
-
-                        page.wait_for_timeout(2000)
-
-                except PlaywrightTimeoutError:
-                    print(
-                        "NO VISIBLE LEGAL NOTICE",
-                        flush=True,
-                    )
-
-                except PlaywrightError as error:
-                    print(
-                        "LEGAL NOTICE COULD NOT BE PROCESSED: "
-                        f"{repr(error)}",
-                        flush=True,
-                    )
-
-                # --------------------------------------------------
-                # VERIFY BROWSER STATE
-                # --------------------------------------------------
-                print(
-                    f"PAGE CLOSED BEFORE SEARCH: "
-                    f"{page.is_closed()}",
-                    flush=True,
-                )
-                print(
-                    "BROWSER CONNECTED BEFORE SEARCH: "
-                    f"{browser.is_connected()}",
-                    flush=True,
-                )
-
-                if page.is_closed():
-                    raise RuntimeError(
-                        "The ECHA page closed before the "
-                        "search field could be located."
-                    )
-
-                if not browser.is_connected():
-                    raise RuntimeError(
-                        "Chromium disconnected before the "
-                        "search field could be located."
-                    )
-
-                # --------------------------------------------------
-                # FIND SEARCH FIELD
-                # --------------------------------------------------
-                print(
-                    "CHECKPOINT 9: Locating ECHA search field",
-                    flush=True,
-                )
-
-                search_field = page.locator(
-                    'input[name="searchText"]'
-                ).first
-
-                print(
-                    "CHECKPOINT 10: Waiting for search field "
-                    "to be attached",
-                    flush=True,
-                )
-
-                search_field.wait_for(
-                    state="attached",
-                    timeout=60000,
-                )
-
-                print(
-                    "CHECKPOINT 11: Search field attached",
-                    flush=True,
-                )
-
-                search_field.wait_for(
-                    state="visible",
-                    timeout=60000,
-                )
-
-                print(
-                    "CHECKPOINT 12: Search field visible",
-                    flush=True,
-                )
-
-                print(
-                    f"PAGE CLOSED BEFORE FILL: "
-                    f"{page.is_closed()}",
-                    flush=True,
-                )
-                print(
-                    "BROWSER CONNECTED BEFORE FILL: "
-                    f"{browser.is_connected()}",
-                    flush=True,
-                )
-
-                if page.is_closed():
-                    raise RuntimeError(
-                        "The ECHA page closed immediately "
-                        "before entering the CAS number."
-                    )
-
-                if not browser.is_connected():
-                    raise RuntimeError(
-                        "Chromium disconnected immediately "
-                        "before entering the CAS number."
-                    )
-
-                # --------------------------------------------------
-                # EXECUTE SEARCH
-                # --------------------------------------------------
-                search_field.fill(
-                    cas_number,
-                    timeout=30000,
-                )
-
-                print(
-                    "CHECKPOINT 13: CAS number entered",
-                    flush=True,
-                )
-
-                search_field.press(
-                    "Enter",
-                    timeout=30000,
-                )
-
-                print(
-                    "CHECKPOINT 14: ECHA search submitted",
-                    flush=True,
-                )
-
-                # --------------------------------------------------
-                # WAIT FOR RESULTS
-                # --------------------------------------------------
-                rows = page.locator(
-                    "table tbody tr"
-                )
-
-                try:
-                    rows.first.wait_for(
-                        state="visible",
-                        timeout=30000,
-                    )
-
-                except PlaywrightTimeoutError:
-                    print(
-                        "ECHA search completed, but no result "
-                        "rows became visible.",
-                        flush=True,
-                    )
-
-                    return []
-
-                # --------------------------------------------------
-                # EXTRACT RESULTS
-                # --------------------------------------------------
-                row_count = rows.count()
-
-                print(
-                    f"ECHA RESULT ROW COUNT: {row_count}",
-                    flush=True,
-                )
-
-                for index in range(row_count):
-                    row = rows.nth(index)
-                    cells = row.locator("td")
-
-                    if cells.count() < 3:
-                        continue
-
-                    try:
-                        name = (
-                            cells.nth(0)
-                            .inner_text()
-                            .strip()
-                        )
-
-                        ec_number = (
-                            cells.nth(1)
-                            .inner_text()
-                            .strip()
-                        )
-
-                        found_cas = (
-                            cells.nth(2)
-                            .inner_text()
-                            .strip()
-                        )
-
-                        link = row.locator("a").first
-                        relative_url = link.get_attribute("href")
-
-                        if not relative_url:
-                            continue
-
-                        if relative_url.startswith("/"):
-                            full_url = (
-                                ECHA_BASE_URL + relative_url
-                            )
-                        else:
-                            full_url = relative_url
-
-                        results.append(
-                            {
-                                "Name": name,
-                                "EC Number": ec_number,
-                                "CAS Number": found_cas,
-                                "URL": full_url,
-                            }
-                        )
-
-                    except PlaywrightError as error:
-                        print(
-                            "COULD NOT PROCESS ECHA RESULT "
-                            f"ROW {index}: {repr(error)}",
-                            flush=True,
-                        )
-
-                print(
-                    "ECHA SEARCH COMPLETED SUCCESSFULLY",
-                    flush=True,
-                )
-                print(
-                    f"RESULTS FOUND: {len(results)}",
-                    flush=True,
-                )
-
-                return results
-
-            # --------------------------------------------------
-            # PLAYWRIGHT ERROR
-            # --------------------------------------------------
-            except PlaywrightError as error:
-                error_name = type(error).__name__
-
-                print("=" * 60, flush=True)
-                print(
-                    f"PLAYWRIGHT ERROR TYPE: {error_name}",
-                    flush=True,
-                )
-                print(
-                    f"PLAYWRIGHT ERROR: {repr(error)}",
-                    flush=True,
-                )
-
-                traceback.print_exc()
-
-                if page is not None:
-                    try:
-                        print(
-                            f"PAGE CLOSED: {page.is_closed()}",
-                            flush=True,
-                        )
-                    except Exception:
-                        print(
-                            "PAGE STATE COULD NOT BE READ",
-                            flush=True,
-                        )
-
-                if browser is not None:
-                    try:
-                        print(
-                            "BROWSER CONNECTED: "
-                            f"{browser.is_connected()}",
-                            flush=True,
-                        )
-                    except Exception:
-                        print(
-                            "BROWSER STATE COULD NOT BE READ",
-                            flush=True,
-                        )
-
-                print("=" * 60, flush=True)
-
-                if error_name == "TargetClosedError":
-                    raise RuntimeError(
-                        "Chromium closed unexpectedly. "
-                        "Check the final completed checkpoint "
-                        "in the Streamlit Cloud logs."
-                    ) from error
-
-                if isinstance(
-                    error,
-                    PlaywrightTimeoutError,
-                ):
-                    raise RuntimeError(
-                        "The browser or ECHA page did not "
-                        "respond within the allowed time."
-                    ) from error
-
-                raise RuntimeError(
-                    "Playwright encountered an error while "
-                    "searching ECHA."
-                ) from error
-
-            # --------------------------------------------------
-            # APPLICATION ERROR
-            # --------------------------------------------------
-            except RuntimeError:
-                traceback.print_exc()
-                raise
-
-            except Exception as error:
-                print("=" * 60, flush=True)
-                print(
-                    f"UNEXPECTED ERROR: {repr(error)}",
-                    flush=True,
-                )
-
-                traceback.print_exc()
-                print("=" * 60, flush=True)
-
-                raise RuntimeError(
-                    "An unexpected error occurred while "
-                    "searching ECHA."
-                ) from error
-
-            # --------------------------------------------------
-            # CLEANUP
-            # --------------------------------------------------
-            finally:
-                print(
-                    "STARTING BROWSER CLEANUP",
-                    flush=True,
-                )
-
-                if context is not None:
-                    try:
-                        context.close()
-
-                        print(
-                            "CONTEXT CLOSED DURING CLEANUP",
-                            flush=True,
-                        )
-
-                    except PlaywrightError as error:
-                        print(
-                            "CONTEXT CLEANUP ERROR: "
-                            f"{repr(error)}",
-                            flush=True,
-                        )
-
-                if browser is not None:
-                    try:
-                        browser.close()
-
-                        print(
-                            "BROWSER CLOSED DURING CLEANUP",
-                            flush=True,
-                        )
-
-                    except PlaywrightError as error:
-                        print(
-                            "BROWSER CLEANUP ERROR: "
-                            f"{repr(error)}",
-                            flush=True,
-                        )
-
-    except RuntimeError:
-        raise
-
-    except Exception as error:
-        print(
-            "ERROR OUTSIDE PLAYWRIGHT CONTEXT: "
-            f"{repr(error)}",
-            flush=True,
+        with st.spinner("Searching ECHA..."):
+            results = search_echa(cas)
+
+        st.session_state.search_results = results
+
+        if results:
+            st.success(
+                f"{len(results)} result(s) found."
+            )
+        else:
+            st.warning(
+                "ECHA was reached, but no matching result was found."
+            )
+
+    except RuntimeError as error:
+        st.session_state.search_results = []
+
+        st.error(
+            "The ECHA search could not be completed."
         )
 
-        traceback.print_exc()
+        st.info(str(error))
+        st.stop()
 
-        raise RuntimeError(
-            "The Playwright service could not be started."
-        ) from error
+
+# --------------------------------------------------
+# DISPLAY RESULTS
+# --------------------------------------------------
+
+if len(st.session_state.search_results) > 0:
+
+    df = pd.DataFrame(
+        st.session_state.search_results
+    )
+
+    st.subheader(
+        "ECHA Search Results"
+    )
+
+    st.dataframe(
+        df[
+            [
+                "Name",
+                "EC Number",
+                "CAS Number"
+            ]
+        ],
+        use_container_width=True
+    )
+
+    # nicer display text
+
+    df["Display"] = (
+        df["Name"]
+        + " | EC "
+        + df["EC Number"].fillna("")
+        + " | CAS "
+        + df["CAS Number"].fillna("")
+    )
+
+    selected_display = st.selectbox(
+        "Select substance",
+        options=df["Display"],
+        key="selected_substance"
+    )
+
+    selected_row = df[
+        df["Display"] == selected_display
+    ].iloc[0]
+
+    st.subheader(
+        "Selected Substance"
+    )
+
+    st.write(
+        f"Name: {selected_row['Name']}"
+    )
+
+    st.write(
+        f"EC Number: {selected_row['EC Number']}"
+    )
+
+    st.write(
+        f"CAS Number: {selected_row['CAS Number']}"
+    )
+
+    st.write(
+        f"URL: {selected_row['URL']}"
+    )
+
+    selected_url = selected_row["URL"]
+
+    # --------------------------------------------------
+    # AUTOMATIC ECICS LOOKUP
+    # --------------------------------------------------
+
+    with st.spinner(
+        "Searching ECICS..."
+    ):
+
+        ecics_result = get_goods_code(
+            selected_row["EC Number"]
+        )
+
+    if ecics_result["success"]:
+
+        st.subheader(
+            "ECICS Information"
+        )
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.write(
+                f"Goods Code: {ecics_result['goods_code']}"
+            )
+
+            st.write(
+                f"CUS Number: {ecics_result['cus_number']}"
+            )
+
+        with col2:
+
+            st.write(
+                f"CAS Number: {ecics_result['cas_number']}"
+            )
+
+            st.write(
+                f"Substance Name: {ecics_result['substance_name']}"
+            )
+
+    else:
+
+        st.warning(
+            ecics_result["message"]
+        )
+    # --------------------------------------------------
+    # AUTOMATIC TARIC LOOKUP
+    # --------------------------------------------------
+
+    with st.spinner(
+        "Building TARIC URL..."
+    ):
+
+        taric_result = get_taric(
+            ecics_result["goods_code"],
+            country,
+            selected_row["CAS Number"]
+        )
+
+    st.subheader(
+        "TARIC Information"
+    )
+
+    if taric_result["success"]:
+
+        st.write(
+            f"Country of Origin: {country}"
+        )
+
+        st.write(
+            f"Goods Code: {ecics_result['goods_code']}"
+        )
+
+        st.markdown(
+            f"{taric_result['taric_url']}"
+        )
+
+        st.code(
+            taric_result["taric_url"],
+            language="text"
+        )
+
+        if "selected_taric_code" in taric_result:
+
+            st.write(
+                f"Selected TARIC Code: "
+                f"{taric_result['selected_taric_code']}"
+            )
+
+        if "measure_text" in taric_result:
+
+            st.text_area(
+                "TARIC Measures",
+                taric_result["measure_text"],
+                height=800
+            )
+
+    else:
+
+        st.warning(
+            taric_result["message"]
+        )
+
+        if "debug_links" in taric_result:
+
+            st.subheader(
+                "Debug Links"
+            )
+
+            for link in taric_result["debug_links"]:
+
+                st.write(link)
+
+    
+# --------------------------------------------------
+# NEXT STEP
+# --------------------------------------------------
+
+    if st.button(
+        "Open ECHA Detail Page"
+    ):
+
+        with st.spinner(
+            "Opening detail page..."
+        ):
+
+            detail = get_echa_detail(
+                selected_url,cas
+            )
+
+        st.subheader(
+            "Detail Page Information"
+        )
+
+        st.write(
+            f"Title: {detail['title']}"
+        )
+
+        st.subheader(
+            "REACH Registrants"
+        )
+
+        registrants = detail["registrants"]
+
+        if len(registrants) > 0:
+
+            df_registrants = pd.DataFrame(
+                registrants
+            )
+
+            df_registrants = df_registrants.drop_duplicates()
+
+            st.dataframe(
+                df_registrants,
+                use_container_width=True
+            )
+
+        else:
+
+            st.warning(
+                "No registrants found."
+            )
