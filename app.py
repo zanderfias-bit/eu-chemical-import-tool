@@ -90,11 +90,33 @@ cas = st.text_input(
     placeholder="110-94-1"
 )
 
-country = st.text_input(
+# --------------------------------------------------
+# COUNTRY SELECTOR
+# --------------------------------------------------
+
+COUNTRY_CODES = {
+    "China": "CN",
+    "India": "IN",
+    "United States": "US",
+    "Japan": "JP",
+    "South Korea": "KR",
+    "United Kingdom": "GB",
+    "Turkey": "TR",
+    "Taiwan": "TW",
+    "Thailand": "TH",
+    "Vietnam": "VN",
+    "Malaysia": "MY",
+    "Singapore": "SG",
+    "Indonesia": "ID",
+}
+
+country = st.selectbox(
     "Country of Origin",
-    placeholder="China"
+    options=list(COUNTRY_CODES.keys()),
+    index=0,
 )
 
+country_code = COUNTRY_CODES[country]
 
 # --------------------------------------------------
 # SEARCH BUTTON
@@ -282,7 +304,7 @@ if len(st.session_state.search_results) > 0:
 
         taric_result = get_taric(
             ecics_result["goods_code"],
-            country,
+            country_code,
             selected_row["CAS Number"]
         )
 

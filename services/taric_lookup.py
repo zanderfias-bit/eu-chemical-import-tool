@@ -16,7 +16,8 @@ COUNTRY_CODES = {
     "Vietnam": "VN",
     "Malaysia": "MY",
     "Singapore": "SG",
-    "Indonesia": "ID"
+    "Indonesia": "ID",
+    "South Korea": "KR"
 }
 
 
