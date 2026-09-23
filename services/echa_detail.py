@@ -1,17 +1,23 @@
+import re
+
 from playwright.sync_api import (
     sync_playwright,
     Error as PlaywrightError,
     TimeoutError as PlaywrightTimeoutError,
 )
 
-import re
 
-
+# --------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------
 ECHA_BASE_URL = (
     "https://chem.echa.europa.eu/"
 )
 
 
+# --------------------------------------------------
+# ECHA DETAIL
+# --------------------------------------------------
 def get_echa_detail(
     relative_url,
     cas_number,
@@ -20,7 +26,6 @@ def get_echa_detail(
     # --------------------------------------------------
     # EXTRACT SUBSTANCE ID
     # --------------------------------------------------
-
     match = re.search(
         r"(\d+\.\d+\.\d+)",
         relative_url,
@@ -28,8 +33,7 @@ def get_echa_detail(
 
     if not match:
         raise RuntimeError(
-            "Could not extract substance ID "
-            "from URL."
+            "Could not extract substance ID from URL."
         )
 
     substance_id = match.group(1)
@@ -37,7 +41,6 @@ def get_echa_detail(
     # --------------------------------------------------
     # BUILD REACH URL
     # --------------------------------------------------
-
     reach_url = (
         f"{ECHA_BASE_URL}"
         f"{substance_id}"
@@ -46,14 +49,19 @@ def get_echa_detail(
         f"&pageIndex=1"
     )
 
-    browser = None
-    context = None
+    print(
+        f"Opening ECHA detail page "
+        f"for CAS {cas_number}",
+        flush=True,
+    )
 
     try:
 
-        with sync_playwright() as p:
+        with sync_playwright() as playwright:
 
-            browser = p.chromium.launch(
+            browser = playwright.chromium.launch(
+                executable_path=
+                playwright.chromium.executable_path,
                 headless=True,
                 chromium_sandbox=False,
                 args=[
@@ -63,191 +71,207 @@ def get_echa_detail(
                 ],
             )
 
-            context = browser.new_context(
-                viewport={
-                    "width": 1280,
-                    "height": 900,
-                },
-                locale="en-US",
-            )
-
-            page = context.new_page()
-
-            print(
-                f"Opening ECHA detail page "
-                f"for CAS {cas_number}",
-                flush=True,
-            )
-
-            response = page.goto(
-                reach_url,
-                wait_until="domcontentloaded",
-                timeout=60000,
-            )
-
-            if (
-                response is not None
-                and response.status >= 400
-            ):
-                raise RuntimeError(
-                    f"ECHA returned HTTP "
-                    f"status {response.status}"
-                )
-
-            # --------------------------------------------------
-            # WAIT FOR APP INITIALISATION
-            # --------------------------------------------------
-
-            page.wait_for_timeout(
-                5000
-            )
-
-            # --------------------------------------------------
-            # ACCEPT LEGAL NOTICE
-            # --------------------------------------------------
+            context = None
 
             try:
 
-                legal_notice = page.locator(
-                    "text=Legal notice"
+                context = browser.new_context(
+                    viewport={
+                        "width": 1280,
+                        "height": 900,
+                    },
+                    locale="en-US",
                 )
 
-                if legal_notice.count() > 0:
+                page = context.new_page()
 
-                    print(
-                        "Legal notice detected",
-                        flush=True,
-                    )
-
-                    accept_button = (
-                        page.get_by_text(
-                            "I Accept the terms",
-                            exact=False,
-                        ).first
-                    )
-
-                    if (
-                        accept_button.count()
-                        > 0
-                    ):
-                        accept_button.click(
-                            timeout=10000,
-                        )
-
-                        print(
-                            "Legal notice accepted",
-                            flush=True,
-                        )
-
-                        page.wait_for_load_state(
-                            "networkidle",
-                            timeout=30000,
-                        )
-
-                        page.wait_for_timeout(
-                            3000
-                        )
-
-            except (
-                PlaywrightError,
-                PlaywrightTimeoutError,
-            ):
-                pass
-
-            # --------------------------------------------------
-            # FIND REGISTRANTS TABLE
-            # --------------------------------------------------
-
-            tables = page.locator(
-                "table"
-            )
-
-            try:
-
-                tables.first.wait_for(
-                    state="visible",
+                # --------------------------------------------------
+                # OPEN PAGE
+                # --------------------------------------------------
+                response = page.goto(
+                    reach_url,
+                    wait_until="domcontentloaded",
                     timeout=60000,
                 )
 
-            except PlaywrightTimeoutError:
+                if (
+                    response is not None
+                    and response.status >= 400
+                ):
+                    raise RuntimeError(
+                        f"ECHA returned HTTP "
+                        f"status {response.status}"
+                    )
 
-                print(
-                    "No registrant tables "
-                    "found.",
-                    flush=True,
+                # --------------------------------------------------
+                # WAIT FOR APP
+                # --------------------------------------------------
+                page.wait_for_timeout(
+                    5000
                 )
 
-                return {
-                    "url": page.url,
-                    "title": page.title(),
-                    "registrants": [],
-                }
+                # --------------------------------------------------
+                # ACCEPT LEGAL NOTICE
+                # --------------------------------------------------
+                try:
 
-            registrants = []
+                    legal_notice = page.locator(
+                        "text=Legal notice"
+                    )
 
-            table = tables.first
+                    if legal_notice.count() > 0:
 
-            rows = table.locator(
-                "tr"
-            )
+                        print(
+                            "Legal notice detected",
+                            flush=True,
+                        )
 
-            row_count = rows.count()
+                        accept_button = (
+                            page.get_by_text(
+                                "I Accept the terms",
+                                exact=False,
+                            ).first
+                        )
 
-            print(
-                f"Registrant rows found: "
-                f"{row_count}",
-                flush=True,
-            )
+                        if (
+                            accept_button.count()
+                            > 0
+                        ):
+                            accept_button.click(
+                                timeout=10000,
+                            )
 
-            for i in range(
-                1,
-                row_count,
-            ):
+                            print(
+                                "Legal notice accepted",
+                                flush=True,
+                            )
+
+                            page.wait_for_load_state(
+                                "networkidle",
+                                timeout=30000,
+                            )
+
+                            page.wait_for_timeout(
+                                3000
+                            )
+
+                except (
+                    PlaywrightError,
+                    PlaywrightTimeoutError,
+                ):
+                    pass
+
+                # --------------------------------------------------
+                # FIND TABLE
+                # --------------------------------------------------
+                tables = page.locator(
+                    "table"
+                )
 
                 try:
 
-                    cells = (
-                        rows.nth(i)
-                        .locator("td")
+                    tables.first.wait_for(
+                        state="visible",
+                        timeout=60000,
                     )
 
-                    if (
-                        cells.count() < 4
-                    ):
+                except PlaywrightTimeoutError:
+
+                    print(
+                        "No registrant tables found.",
+                        flush=True,
+                    )
+
+                    return {
+                        "url": page.url,
+                        "title": page.title(),
+                        "registrants": [],
+                    }
+
+                # --------------------------------------------------
+                # EXTRACT REGISTRANTS
+                # --------------------------------------------------
+                registrants = []
+
+                table = tables.first
+
+                rows = table.locator(
+                    "tr"
+                )
+
+                row_count = rows.count()
+
+                print(
+                    f"Registrant rows found: "
+                    f"{row_count}",
+                    flush=True,
+                )
+
+                for i in range(
+                    1,
+                    row_count,
+                ):
+
+                    try:
+
+                        cells = (
+                            rows.nth(i)
+                            .locator("td")
+                        )
+
+                        if (
+                            cells.count() < 4
+                        ):
+                            continue
+
+                        registrants.append(
+                            {
+                                "Registrant":
+                                    cells.nth(0)
+                                    .inner_text()
+                                    .strip(),
+
+                                "Address":
+                                    cells.nth(1)
+                                    .inner_text()
+                                    .strip(),
+
+                                "Status":
+                                    cells.nth(2)
+                                    .inner_text()
+                                    .strip(),
+
+                                "Details":
+                                    cells.nth(3)
+                                    .inner_text()
+                                    .strip(),
+                            }
+                        )
+
+                    except PlaywrightError:
                         continue
 
-                    registrants.append(
-                        {
-                            "Registrant":
-                                cells.nth(0)
-                                .inner_text()
-                                .strip(),
+                # --------------------------------------------------
+                # RETURN RESULT
+                # --------------------------------------------------
+                return {
+                    "url": page.url,
+                    "title": page.title(),
+                    "registrants": registrants,
+                }
 
-                            "Address":
-                                cells.nth(1)
-                                .inner_text()
-                                .strip(),
+            finally:
 
-                            "Status":
-                                cells.nth(2)
-                                .inner_text()
-                                .strip(),
+                if context is not None:
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
 
-                            "Details":
-                                cells.nth(3)
-                                .inner_text()
-                                .strip(),
-                        }
-                    )
-
-                except PlaywrightError:
-                    continue
-
-            return {
-                "url": page.url,
-                "title": page.title(),
-                "registrants": registrants,
-            }
+                try:
+                    browser.close()
+                except Exception:
+                    pass
 
     except PlaywrightError as error:
 
@@ -262,11 +286,3 @@ def get_echa_detail(
             f"Unexpected ECHA detail error: "
             f"{error}"
         ) from error
-
-    finally:
-
-        if context is not None:
-            context.close()
-
-        if browser is not None:
-            browser.close()
