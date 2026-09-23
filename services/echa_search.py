@@ -190,6 +190,41 @@ def search_echa(cas_number):
                     wait_until="domcontentloaded",
                     timeout=60000,
                 )
+                page.wait_for_timeout(8000)
+
+                print(
+                    "PAGE TITLE:",
+                    page.title(),
+                    flush=True,
+                )
+
+                try:
+                    body_text = page.locator(
+                        "body"
+                    ).inner_text(
+                        timeout=10000
+                    )
+
+                    print(
+                        "BODY TEXT START",
+                        flush=True,
+                    )
+
+                    print(
+                        body_text[:4000],
+                        flush=True,
+                    )
+
+                    print(
+                        "BODY TEXT END",
+                        flush=True,
+                    )
+
+                except Exception as error:
+                    print(
+                        f"BODY READ ERROR: {error}",
+                        flush=True,
+                    )
                 # --------------------------------------------------
                 # WAIT FOR LEGAL NOTICE
                 # --------------------------------------------------
