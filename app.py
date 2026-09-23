@@ -295,7 +295,7 @@ if len(st.session_state.search_results) > 0:
             "TARIC Information"
         )
 
-        if taric_result["success"\]:
+        if taric_result["success"]:
 
             st.write(
                 f"Country of Origin: {country}"
@@ -349,7 +349,7 @@ if len(st.session_state.search_results) > 0:
 
                 for link in taric_result[
                     "debug_links"
-                \]:
+                ]:
                     st.write(link)
 
     else:
