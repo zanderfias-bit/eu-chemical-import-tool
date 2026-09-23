@@ -103,7 +103,7 @@ def get_echa_detail(
             # WAIT FOR APP
             # --------------------------------------------------
             page.wait_for_timeout(
-                1500
+                5000
             )
 
             # --------------------------------------------------
@@ -148,7 +148,7 @@ def get_echa_detail(
                         )
 
                         page.wait_for_timeout(
-                            1500
+                            3000
                         )
 
             except (
