@@ -360,35 +360,148 @@ def search_echa(cas_number):
                 # --------------------------------------------------
                 # LEGAL NOTICE
                 # --------------------------------------------------
+                # --------------------------------------------------
+                # LEGAL NOTICE
+                # --------------------------------------------------
                 print(
                     "CHECKPOINT 9: Checking legal notice",
                     flush=True,
                 )
 
                 try:
+                    legal_notice_checkbox = page.locator(
+                        'input#legal-notice, '
+                        'input[name="legal-notice"]'
+                    ).first
+
+                    legal_notice_label = page.locator(
+                        'label[for="legal-notice"]'
+                    ).first
+
+                    checkbox_count = (
+                        legal_notice_checkbox.count()
+                    )
+
+                    label_count = (
+                        legal_notice_label.count()
+                    )
+
+                    print(
+                        "LEGAL NOTICE CHECKBOX COUNT: "
+                        f"{checkbox_count}",
+                        flush=True,
+                    )
+
+                    print(
+                        "LEGAL NOTICE LABEL COUNT: "
+                        f"{label_count}",
+                        flush=True,
+                    )
+
+                    if (
+                        label_count > 0
+                        and legal_notice_label.is_visible()
+                    ):
+                        legal_notice_label.click(
+                            timeout=10000
+                        )
+
+                        print(
+                            "LEGAL NOTICE LABEL CLICKED",
+                            flush=True,
+                        )
+
+                    elif checkbox_count > 0:
+                        if not legal_notice_checkbox.is_checked():
+                            legal_notice_checkbox.check(
+                                force=True,
+                                timeout=10000,
+                            )
+
+                            print(
+                                "LEGAL NOTICE CHECKBOX CHECKED",
+                                flush=True,
+                            )
+
                     accept_button = page.get_by_text(
                         "I Accept the terms",
                         exact=False,
                     ).first
 
-                    if accept_button.is_visible(timeout=5000):
-                        accept_button.click(timeout=10000)
+                    accept_button_count = (
+                        accept_button.count()
+                    )
 
-                        print(
-                            "LEGAL NOTICE ACCEPTED",
-                            flush=True,
-                        )
+                    print(
+                        "LEGAL NOTICE ACCEPT BUTTON COUNT: "
+                        f"{accept_button_count}",
+                        flush=True,
+                    )
 
-                        page.wait_for_timeout(2000)
+                    if accept_button_count > 0:
+                        try:
+                            page.wait_for_function(
+                                """
+                                () => {
+                                    const elements = Array.from(
+                                        document.querySelectorAll(
+                                            "button, input[type='button'], "
+                                            + "input[type='submit'], a"
+                                        )
+                                    );
+
+                                    return elements.some(
+                                        element => {
+                                            const text = (
+                                                element.innerText
+                                                || element.value
+                                                || element.textContent
+                                                || ""
+                                            );
+
+                                            return (
+                                                text.includes(
+                                                    "I Accept the terms"
+                                                )
+                                                && !element.disabled
+                                            );
+                                        }
+                                    );
+                                }
+                                """,
+                                timeout=15000,
+                            )
+
+                        except PlaywrightTimeoutError:
+                            print(
+                                "ACCEPT BUTTON DID NOT BECOME "
+                                "ENABLED WITHIN 15 SECONDS",
+                                flush=True,
+                            )
+
+                        if accept_button.is_visible():
+                            accept_button.click(
+                                timeout=10000,
+                            )
+
+                            print(
+                                "LEGAL NOTICE ACCEPTED",
+                                flush=True,
+                            )
+
+                            page.wait_for_timeout(2000)
+
                     else:
                         print(
-                            "LEGAL NOTICE NOT VISIBLE",
+                            "LEGAL NOTICE ACCEPT BUTTON "
+                            "NOT PRESENT",
                             flush=True,
                         )
 
-                except PlaywrightTimeoutError:
+                except PlaywrightTimeoutError as error:
                     print(
-                        "NO VISIBLE LEGAL NOTICE",
+                        "LEGAL NOTICE TIMEOUT: "
+                        f"{error!r}",
                         flush=True,
                     )
 
