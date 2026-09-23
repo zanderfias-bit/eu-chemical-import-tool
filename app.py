@@ -7,7 +7,37 @@ from services.echa_detail import get_echa_detail
 from services.ecics_lookup import get_goods_code
 from services.taric_lookup import get_taric
 
+# --------------------------------------------------
+# CACHE FUNCTIONS
+# --------------------------------------------------
 
+@st.cache_data(ttl=86400)
+def get_cached_echa_search(
+    cas_number,
+):
+    return search_echa(
+        cas_number
+    )
+
+
+@st.cache_data(ttl=86400)
+def get_cached_echa_detail(
+    url,
+    cas_number,
+):
+    return get_echa_detail(
+        url,
+        cas_number,
+    )
+
+
+@st.cache_data(ttl=86400)
+def get_cached_goods_code(
+    ec_number,
+):
+    return get_goods_code(
+        ec_number
+    )
 
 import os
 import sys
@@ -104,7 +134,9 @@ if st.button(
 
     try:
         with st.spinner("Searching ECHA..."):
-            results = search_echa(cas)
+            results = results = get_cached_echa_search(
+                cas
+            )
 
         st.session_state.search_results = results
 
@@ -317,7 +349,7 @@ with st.spinner(
     "Loading ECHA registration details..."
 ):
 
-    detail = get_echa_detail(
+    detail = detail = get_cached_echa_detail(
         selected_url,
         cas
     )
@@ -362,3 +394,14 @@ else:
     st.warning(
         "No registrants found."
     )
+
+
+if st.button(
+    "Clear Cache"
+):
+    st.cache_data.clear()
+
+    st.success(
+        "Cache cleared."
+    )
+    
