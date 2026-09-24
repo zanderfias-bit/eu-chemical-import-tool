@@ -252,40 +252,43 @@ if len(st.session_state.search_results) > 0:
             )
         except Exception:
             pass
+    try:
+        
+        if ecics_result["success"]:
 
-    if ecics_result["success"]:
-
-        st.subheader(
-            "ECICS Information"
-        )
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-
-            st.write(
-                f"Goods Code: {ecics_result['goods_code']}"
+            st.subheader(
+                "ECICS Information"
             )
 
-            st.write(
-                f"CUS Number: {ecics_result['cus_number']}"
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                st.write(
+                    f"Goods Code: {ecics_result['goods_code']}"
+                )
+
+                st.write(
+                    f"CUS Number: {ecics_result['cus_number']}"
+                )
+
+            with col2:
+
+                st.write(
+                    f"CAS Number: {ecics_result['cas_number']}"
+                )
+
+                st.write(
+                    f"Substance Name: {ecics_result['substance_name']}"
+                )
+
+        else:
+
+            st.warning(
+                ecics_result["message"]
             )
-
-        with col2:
-
-            st.write(
-                f"CAS Number: {ecics_result['cas_number']}"
-            )
-
-            st.write(
-                f"Substance Name: {ecics_result['substance_name']}"
-            )
-
-    else:
-
-        st.warning(
-            ecics_result["message"]
-        )
+    except Exception:
+        pass
     # --------------------------------------------------
     # AUTOMATIC TARIC LOOKUP
     # --------------------------------------------------
