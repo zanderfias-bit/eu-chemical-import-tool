@@ -10,6 +10,7 @@ from services.taric_lookup import get_taric
 # --------------------------------------------------
 # CACHE FUNCTIONS
 # --------------------------------------------------
+selected_url = None
 
 @st.cache_data(ttl=86400)
 def get_cached_echa_search(
