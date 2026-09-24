@@ -208,26 +208,29 @@ if len(st.session_state.search_results) > 0:
     except Exception:
         pass
     
+    try:
+        st.subheader(
+            "Selected Substance"
+        )
 
-    st.subheader(
-        "Selected Substance"
-    )
+        st.write(
+            f"Name: {selected_row['Name']}"
+        )
 
-    st.write(
-        f"Name: {selected_row['Name']}"
-    )
+        st.write(
+            f"EC Number: {selected_row['EC Number']}"
+        )
 
-    st.write(
-        f"EC Number: {selected_row['EC Number']}"
-    )
+        st.write(
+            f"CAS Number: {selected_row['CAS Number']}"
+        )
 
-    st.write(
-        f"CAS Number: {selected_row['CAS Number']}"
-    )
-
-    st.write(
-        f"URL: {selected_row['URL']}"
-    )
+        st.write(
+            f"URL: {selected_row['URL']}"
+        )
+    except Exception:
+        pass
+    
     try:
         # code using selected_url
         selected_url = selected_row["URL"]
