@@ -408,33 +408,35 @@ try:
 except Exception:
     pass
 
+try:
+    if len(registrants) > 0:
 
-if len(registrants) > 0:
+        df_registrants = pd.DataFrame(
+            registrants
+        )
 
-    df_registrants = pd.DataFrame(
-        registrants
-    )
+        df_registrants = (
+            df_registrants
+            .drop_duplicates()
+            .reset_index(drop=True)
+        )
 
-    df_registrants = (
-        df_registrants
-        .drop_duplicates()
-        .reset_index(drop=True)
-    )
+        st.success(
+            f"{len(df_registrants)} registrant(s) found."
+        )
 
-    st.success(
-        f"{len(df_registrants)} registrant(s) found."
-    )
+        st.dataframe(
+            df_registrants,
+            use_container_width=True
+        )
 
-    st.dataframe(
-        df_registrants,
-        use_container_width=True
-    )
+    else:
 
-else:
-
-    st.warning(
-        "No registrants found."
-    )
+        st.warning(
+            "No registrants found."
+        )
+except Exception:
+    pass
 
 
 if st.button(
