@@ -372,11 +372,13 @@ if len(st.session_state.search_results) > 0:
 with st.spinner(
     "Loading ECHA registration details..."
 ):
-
-    detail = detail = get_cached_echa_detail(
-        selected_url,
-        cas
-    )
+    try:
+        # code using selected_url
+        detail = detail = get_cached_echa_detail(
+                selected_url,
+                cas)
+    except Exception:
+        pass
 
 st.subheader(
     "Detail Page Information"
