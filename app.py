@@ -224,8 +224,13 @@ if len(st.session_state.search_results) > 0:
     st.write(
         f"URL: {selected_row['URL']}"
     )
+    try:
+        # code using selected_url
+        selected_url = selected_row["URL"]
 
-    selected_url = selected_row["URL"]
+    except Exception:
+        pass
+    
 
     # --------------------------------------------------
     # AUTOMATIC ECICS LOOKUP
