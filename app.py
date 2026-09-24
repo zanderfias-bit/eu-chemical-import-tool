@@ -390,9 +390,13 @@ st.subheader(
     "Detail Page Information"
 )
 
-st.write(
-    f"Title: {detail['title']}"
-)
+try:
+        # code using selected_url
+        st.write(
+            f"Title: {detail['title']}")
+except Exception:
+    pass
+
 
 st.subheader(
     "REACH Registrants"
