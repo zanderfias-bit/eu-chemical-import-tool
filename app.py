@@ -201,10 +201,13 @@ if len(st.session_state.search_results) > 0:
         options=df["Display"],
         key="selected_substance"
     )
-
-    selected_row = df[
-        df["Display"] == selected_display
-    ].iloc[0]
+    try:
+            selected_row = df[
+                    df["Display"] == selected_display
+                ].iloc[0]
+    except Exception:
+        pass
+    
 
     st.subheader(
         "Selected Substance"
