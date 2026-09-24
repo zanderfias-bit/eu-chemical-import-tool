@@ -402,7 +402,12 @@ st.subheader(
     "REACH Registrants"
 )
 
-registrants = detail["registrants"]
+try:
+        # code using selected_url
+        registrants = detail["registrants"]
+except Exception:
+    pass
+
 
 if len(registrants) > 0:
 
