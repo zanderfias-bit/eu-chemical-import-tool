@@ -230,7 +230,7 @@ if len(st.session_state.search_results) > 0:
         )
     except Exception:
         pass
-    
+
     try:
         # code using selected_url
         selected_url = selected_row["URL"]
@@ -246,10 +246,12 @@ if len(st.session_state.search_results) > 0:
     with st.spinner(
         "Searching ECICS..."
     ):
-
-        ecics_result = get_goods_code(
-            selected_row["EC Number"]
-        )
+        try:
+            ecics_result = get_goods_code(
+                selected_row["EC Number"]
+            )
+        except Exception:
+            pass
 
     if ecics_result["success"]:
 
