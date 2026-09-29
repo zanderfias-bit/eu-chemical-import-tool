@@ -198,17 +198,40 @@ if len(st.session_state.search_results) > 0:
         + df["CAS Number"].fillna("")
     )
 
-    selected_display = st.selectbox(
-        "Select substance",
-        options=df["Display"],
-        key="selected_substance"
-    )
-    try:
+    # --------------------------------------------------
+    # AUTO SELECT IF ONLY ONE RESULT
+    # --------------------------------------------------
+
+    if len(df) == 1:
+
+        selected_row = df.iloc[0]
+
+        st.info(
+            "Only one ECHA result found. "
+            "Automatically selected."
+        )
+
+        st.session_state.selected_substance = (
+            selected_row["Display"]
+        )
+
+    else:
+
+        selected_display = st.selectbox(
+            "Select substance",
+            options=df["Display"],
+            key="selected_substance"
+        )
+
+        try:
+
             selected_row = df[
-                    df["Display"] == selected_display
-                ].iloc[0]
-    except Exception:
-        pass
+                df["Display"] == selected_display
+            ].iloc[0]
+
+        except Exception:
+
+            selected_row = None
     
     try:
         st.subheader(
