@@ -23,6 +23,37 @@ COUNTRY_CODES = {
 
 def get_taric(goods_code, country, cas_number):
 
+    from datetime import datetime
+
+    country_code = COUNTRY_CODES.get(country)
+
+    if not country_code:
+        return {
+            "success": False,
+            "message": f"Country '{country}' not supported"
+        }
+
+    today = datetime.today()
+
+    sim_date = today.strftime("%Y%m%d")
+    date_picker = today.strftime("%d-%m-%Y")
+
+    taric_url = (
+        "https://ec.europa.eu/taxation_customs/dds2/taric/measures.jsp"
+        f"?Lang=en"
+        f"&SimDate={sim_date}"
+        f"&Area={country_code}"
+        f"&Taric={goods_code}"
+        f"&DatePicker={date_picker}"
+    )
+
+    return {
+        "success": True,
+        "taric_url": taric_url,
+        "goods_code": goods_code,
+        "country": country
+    }
+
     country_code = COUNTRY_CODES.get(country)
 
     if not country_code:
