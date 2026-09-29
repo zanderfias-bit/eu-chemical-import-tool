@@ -329,10 +329,6 @@ if len(st.session_state.search_results) > 0:
                     taric_result["taric_url"]
                 )
 
-                st.code(
-                    taric_result["taric_url"],
-                    language="text"
-                )
 
                 if (
                     "selected_taric_code"
