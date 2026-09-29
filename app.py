@@ -6,6 +6,7 @@ from services.echa_search import search_echa
 from services.echa_detail import get_echa_detail
 from services.ecics_lookup import get_goods_code
 from services.taric_lookup import get_taric
+from services.taric_lookup import COUNTRY_CODES
 
 # --------------------------------------------------
 # CACHE FUNCTIONS
@@ -91,9 +92,10 @@ cas = st.text_input(
     placeholder="110-94-1"
 )
 
-country = st.text_input(
+country = st.selectbox(
     "Country of Origin",
-    placeholder="China"
+    options=list(COUNTRY_CODES.keys()),
+    index=0
 )
 
 
