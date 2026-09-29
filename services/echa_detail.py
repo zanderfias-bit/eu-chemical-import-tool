@@ -85,10 +85,18 @@ def get_echa_detail(
             # OPEN PAGE
             # --------------------------------------------------
             response = page.goto(
-                reach_url,
+                selected_url,
                 wait_until="domcontentloaded",
-                timeout=60000,
+                timeout=60000
             )
+
+            try:
+                page.locator("table").first.wait_for(
+                    state="visible",
+                    timeout=15000
+                )
+            except:
+                pass
 
             if (
                 response is not None

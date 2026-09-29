@@ -188,9 +188,16 @@ def search_echa(cas_number):
                 response = page.goto(
                     search_url,
                     wait_until="domcontentloaded",
-                    timeout=60000,
+                    timeout=60000
                 )
-                page.wait_for_timeout(8000)
+
+                try:
+                    page.wait_for_selector(
+                        "table tbody tr",
+                        timeout=15000
+                    )
+                except:
+                    pass
 
                 print(
                     "PAGE TITLE:",
@@ -229,12 +236,21 @@ def search_echa(cas_number):
                 # WAIT FOR LEGAL NOTICE
                 # --------------------------------------------------
                 try:
-                    page.wait_for_timeout(5000)
-
                     accept_button = page.get_by_text(
                         "I Accept the terms",
-                        exact=False,
+                        exact=False
                     ).first
+
+                    try:
+                        accept_button.wait_for(
+                            state="visible",
+                            timeout=2000
+                        )
+
+                        accept_button.click()
+
+                    except:
+                        pass
 
                     if accept_button.count() > 0:
 
