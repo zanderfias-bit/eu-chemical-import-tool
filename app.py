@@ -499,162 +499,176 @@ except Exception:
 # --------------------------------------------------
 # PURCHASE HISTORY LOOKUP
 # --------------------------------------------------
+try:
+    if (
+        selected_row is not None
+        and purchase_df is not None
+    ):
 
-if (
-    selected_row is not None
-    and purchase_df is not None
-):
-
-    selected_cas = selected_row.get(
-        "CAS Number"
-    )
-
-    purchase_info = get_purchase_information(
-        purchase_df,
-        selected_cas,
-    )
-
-    st.subheader(
-        "Purchase History"
-    )
-
-    if purchase_info["purchased"]:
-
-        st.success(
-            "This product has previously been purchased."
+        selected_cas = selected_row.get(
+            "CAS Number"
         )
 
-        latest_suppliers = (
-            purchase_info["last_suppliers"]
+        purchase_info = get_purchase_information(
+            purchase_df,
+            selected_cas,
         )
 
-        supplier_text = (
-            ", ".join(latest_suppliers)
-            if latest_suppliers
-            else "Supplier not available"
+        st.subheader(
+            "Purchase History"
         )
 
-        col1, col2 = st.columns(2)
+        if purchase_info["purchased"]:
 
-        with col1:
-
-            st.write(
-                "**Last purchase date:**",
-                purchase_info[
-                    "last_purchase_date"
-                ].strftime("%d/%m/%Y"),
+            st.success(
+                "This product has previously been purchased."
             )
 
-            st.write(
-                "**Supplier on last purchase:**",
-                supplier_text,
+            latest_suppliers = (
+                purchase_info["last_suppliers"]
             )
 
-        with col2:
-
-            st.write(
-                "**Purchase lines found:**",
-                purchase_info[
-                    "purchase_line_count"
-                ],
+            supplier_text = (
+                ", ".join(latest_suppliers)
+                if latest_suppliers
+                else "Supplier not available"
             )
 
-            st.write(
-                "**Suppliers used:**",
-                len(
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                st.write(
+                    "**Last purchase date:**",
                     purchase_info[
-                        "all_suppliers"
-                    ]
-                ),
-            )
+                        "last_purchase_date"
+                    ].strftime("%d/%m/%Y"),
+                )
 
-        latest_purchases = purchase_info[
-            "latest_purchases"
-        ].copy()
+                st.write(
+                    "**Supplier on last purchase:**",
+                    supplier_text,
+                )
 
-        latest_display_columns = [
-            "supplier_name",
-            "product_description",
-            "article_reference",
-        ]
+            with col2:
 
-        existing_latest_columns = [
-            column
-            for column in latest_display_columns
-            if column in latest_purchases.columns
-        ]
+                st.write(
+                    "**Purchase lines found:**",
+                    purchase_info[
+                        "purchase_line_count"
+                    ],
+                )
 
-        st.write(
-            "**Most recent purchase:**"
-        )
+                st.write(
+                    "**Suppliers used:**",
+                    len(
+                        purchase_info[
+                            "all_suppliers"
+                        ]
+                    ),
+                )
 
-        st.dataframe(
-            latest_purchases[
-                existing_latest_columns
-            ],
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "supplier_name": "Supplier",
-                "product_description": (
-                    "Purchased product"
-                ),
-                "article_reference": (
-                    "Article reference"
-                ),
-            },
-        )
-
-        with st.expander(
-            "View complete purchase history"
-        ):
-
-            history = purchase_info[
-                "history"
+            latest_purchases = purchase_info[
+                "latest_purchases"
             ].copy()
 
-            history_display_columns = [
-                "purchase_date",
+            latest_display_columns = [
                 "supplier_name",
                 "product_description",
                 "article_reference",
-                "document_number",
+                "purchase_price",
+                "currency",
             ]
 
-            existing_history_columns = [
+            existing_latest_columns = [
                 column
-                for column
-                in history_display_columns
-                if column in history.columns
+                for column in latest_display_columns
+                if column in latest_purchases.columns
             ]
+
+            st.write(
+                "**Most recent purchase:**"
+            )
 
             st.dataframe(
-                history[
-                    existing_history_columns
+                latest_purchases[
+                    existing_latest_columns
                 ],
                 hide_index=True,
                 use_container_width=True,
                 column_config={
-                    "purchase_date":
-                        st.column_config.DateColumn(
-                            "Purchase date",
-                            format="DD/MM/YYYY",
-                        ),
                     "supplier_name": "Supplier",
-                    "product_description":
-                        "Purchased product",
-                    "article_reference":
-                        "Article reference",
-                    "document_number":
-                        "Document number",
+                    "product_description": (
+                        "Purchased product"
+                    ),
+                    "article_reference": (
+                        "Article reference"
+                    ),
+                    "purchase_price": (
+                        "Unit purchase price"
+                    ),
+                    "currency": (
+                        "Currency"
+                        ),
                 },
             )
 
-    else:
+            with st.expander(
+                "View complete purchase history"
+            ):
 
-        st.info(
-            purchase_info["message"]
-        )
+                history = purchase_info[
+                    "history"
+                ].copy()
+
+                history_display_columns = [
+                    "purchase_date",
+                    "supplier_name",
+                    "product_description",
+                    "article_reference",
+                    "document_number",
+                ]
+
+                existing_history_columns = [
+                    column
+                    for column
+                    in history_display_columns
+                    if column in history.columns
+                ]
+
+                st.dataframe(
+                    history[
+                        existing_history_columns
+                    ],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "purchase_date":
+                            st.column_config.DateColumn(
+                                "Purchase date",
+                                format="DD/MM/YYYY",
+                            ),
+                        "supplier_name": "Supplier",
+                        "product_description":
+                            "Purchased product",
+                        "article_reference":
+                            "Article reference",
+                        "document_number":
+                            "Document number",
+                        "purchase_price": 
+                            "Unit purchase price",
+                        "currency": 
+                             "Currency",
+                    },
+                )
+
+        else:
+
+            st.info(
+                purchase_info["message"]
+            )
+except Exception:
+    pass
 
 if st.button(
     "Clear Cache"
