@@ -571,13 +571,21 @@ try:
             latest_purchases = purchase_info[
                 "latest_purchases"
             ].copy()
+            latest_purchases["unit_price"] = (
+                latest_purchases["purchase_price"]
+                .fillna("")
+                .astype(str)
+                + " "
+                + latest_purchases["currency"]
+                .fillna("")
+                .astype(str)
+            )
 
             latest_display_columns = [
                 "supplier_name",
                 "product_description",
                 "article_reference",
-                "purchase_price",
-                "currency",
+                "unit_price",
             ]
 
             existing_latest_columns = [
@@ -604,12 +612,9 @@ try:
                     "article_reference": (
                         "Article reference"
                     ),
-                    "purchase_price": (
+                    "unit_price": (
                         "Unit purchase price"
                     ),
-                    "currency": (
-                        "Currency"
-                        ),
                 },
             )
 
@@ -626,6 +631,8 @@ try:
                     "supplier_name",
                     "product_description",
                     "article_reference",
+                    "purchase_price",
+                    "currency",
                     "document_number",
                 ]
 
