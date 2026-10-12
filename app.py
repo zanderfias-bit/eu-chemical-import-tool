@@ -711,6 +711,25 @@ except Exception:
 # --------------------------------------------------
 # SALES HISTORY LOOKUP
 # --------------------------------------------------
+
+st.subheader("Sales History")
+
+customers = get_customers_for_cas(
+    sales_df,
+    selected_cas,
+)
+
+customer_options = ["All customers"]
+
+if customers:
+    customer_options.extend(customers)
+
+selected_customer = st.selectbox(
+    "Customer",
+    customer_options,
+    key="sales_customer_selector",
+)
+
 customer_filter = (
     None
     if selected_customer == "All customers"
@@ -744,7 +763,7 @@ history = history.sort_values(
     ascending=False
 )
 
-if len(history) > 0:
+if not history.empty:
 
     latest_sale = history.iloc[0]
 
@@ -760,29 +779,26 @@ if len(history) > 0:
 
         st.write(
             "**Date:**",
-            latest_sale["sales_date"]
-            .strftime("%d/%m/%Y")
-            if pd.notna(
-                latest_sale["sales_date"]
-            )
+            latest_sale["sales_date"].strftime("%d/%m/%Y")
+            if pd.notna(latest_sale["sales_date"])
             else "-"
         )
 
         st.write(
             "**Sales Order:**",
-            latest_sale["sales_order"]
+            latest_sale.get("sales_order", "-")
         )
 
     with col2:
 
         st.write(
             "**Unit Price:**",
-            latest_sale["sales_price"]
+            latest_sale.get("sales_price", "-")
         )
 
         st.write(
             "**Quantity:**",
-            latest_sale["sales_quantity"]
+            latest_sale.get("sales_quantity", "-")
         )
 
     st.write("### Sales History")
@@ -798,7 +814,6 @@ else:
     st.warning(
         "No sales records found."
     )
-
 if st.button(
     "Clear Cache"
 ):
