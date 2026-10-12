@@ -187,30 +187,62 @@ def search_echa(cas_number):
 
                 response = page.goto(
                     search_url,
-                    wait_until="domcontentloaded",
+                    wait_until="networkidle",
                     timeout=60000
                 )
 
+                # ------------------------------
+                # ACCEPT COOKIES
+                # ------------------------------
+
                 try:
-                    page.wait_for_selector(
-                        "table tbody tr",
-                        timeout=15000
+
+                    page.get_by_text(
+                        "Accept all cookies",
+                        exact=False
+                    ).click(
+                        timeout=5000
                     )
-                except:
+
+                    page.wait_for_timeout(2000)
+
+                except Exception:
                     pass
+
+                # ------------------------------
+                # ACCEPT LEGAL NOTICE
+                # ------------------------------
+
+                try:
+
+                    page.get_by_text(
+                        "I Accept the terms",
+                        exact=False
+                    ).click(
+                        timeout=5000
+                    )
+
+                    page.wait_for_load_state(
+                        "networkidle",
+                        timeout=30000
+                    )
+
+                    page.wait_for_timeout(3000)
+
+                except Exception:
+                    pass
+
+                print(
+                    "CURRENT URL:",
+                    page.url,
+                    flush=True,
+                )
 
                 print(
                     "PAGE TITLE:",
                     page.title(),
                     flush=True,
                 )
-
-                try:
-                    body_text = page.locator(
-                        "body"
-                    ).inner_text(
-                        timeout=10000
-                    )
 
                     print(
                         "BODY TEXT START",
