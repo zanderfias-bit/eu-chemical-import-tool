@@ -13,7 +13,10 @@ def normalize_cas(value):
 
     value = str(value).strip()
 
-    match = re.search(r"\d{2,7}-\d{2}-\d", value)
+    match = re.search(
+        r"\d{2,7}-\d{2}-\d",
+        value
+    )
 
     if match:
         return match.group(0)
@@ -47,6 +50,7 @@ def load_sales_history(file_path):
             continue
 
         df = df.copy()
+
         df["source_sheet"] = sheet_name
 
         frames.append(df)
@@ -64,22 +68,60 @@ def load_sales_history(file_path):
         for col in sales_df.columns
     ]
 
-    sales_df["cas_normalized"] = sales_df[
-        "CAS nummer"
-    ].apply(normalize_cas)
+    # -------------------------
+    # STANDARDISE COLUMN NAMES
+    # -------------------------
 
-    sales_df["customer_display"] = (
-        sales_df["Bedrijfsref. (derde)"]
-        .fillna("")
-        .astype(str)
-        + " | "
-        + sales_df["Naam 1 derden"]
-        .fillna("")
-        .astype(str)
+    sales_df = sales_df.rename(
+        columns={
+            "Artikelreferentie": "article_reference",
+            "Omschrijving 1 artik": "product_description",
+            "CAS nummer": "cas_number",
+            "Bedrijfsref. (derde)": "customer_code",
+            "Naam 1 derden": "customer_name",
+            "Dagboekcode": "journal_code",
+            "Doc.nr.": "document_number",
+            "Documentdatum": "sales_date",
+            "Aankooporder": "purchase_order",
+            "Verkooporder": "sales_order",
+            "Eenheidsprijs": "sales_price",
+            "Verkopen": "sales_quantity",
+            "Basis BTW in basisva": "sales_value",
+        }
     )
 
-    sales_df["Documentdatum"] = pd.to_datetime(
-        sales_df["Documentdatum"],
+    # -------------------------
+    # CAS
+    # -------------------------
+
+    sales_df["cas_normalized"] = sales_df[
+        "cas_number"
+    ].apply(normalize_cas)
+
+    # -------------------------
+    # CUSTOMER DISPLAY
+    # -------------------------
+
+    sales_df["customer_display"] = (
+        sales_df["customer_code"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        +
+        " | "
+        +
+        sales_df["customer_name"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+
+    # -------------------------
+    # DATE
+    # -------------------------
+
+    sales_df["sales_date"] = pd.to_datetime(
+        sales_df["sales_date"],
         errors="coerce"
     )
 
@@ -94,13 +136,16 @@ def get_customers_for_cas(
     Return customer list for CAS.
     """
 
-    cas_number = normalize_cas(cas_number)
+    cas_number = normalize_cas(
+        cas_number
+    )
 
     if cas_number is None:
         return []
 
     matches = sales_df[
-        sales_df["cas_normalized"] == cas_number
+        sales_df["cas_normalized"]
+        == cas_number
     ]
 
     customers = (
@@ -120,10 +165,12 @@ def get_sales_information(
     selected_customer=None
 ):
     """
-    Return sales information.
+    Return filtered sales information.
     """
 
-    cas_number = normalize_cas(cas_number)
+    cas_number = normalize_cas(
+        cas_number
+    )
 
     if cas_number is None:
 
@@ -137,7 +184,8 @@ def get_sales_information(
         }
 
     matches = sales_df[
-        sales_df["cas_normalized"] == cas_number
+        sales_df["cas_normalized"]
+        == cas_number
     ].copy()
 
     if selected_customer:
@@ -159,19 +207,18 @@ def get_sales_information(
         }
 
     matches = matches.sort_values(
-        "Documentdatum",
+        "sales_date",
         ascending=False
     )
 
     last_sales_date = matches[
-        "Documentdatum"
+        "sales_date"
     ].max()
 
     latest_sales = matches[
-        matches["Documentdatum"]
+        matches["sales_date"]
         == last_sales_date
-    ]
-    print (latest_sales)
+    ].copy()
 
     return {
         "sold": True,
