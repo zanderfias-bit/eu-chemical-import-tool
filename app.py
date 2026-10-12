@@ -748,20 +748,26 @@ try:
             else selected_customer
         )
 
-        sales_info = get_sales_information(
-            sales_df,
-            selected_cas,
-            customer_filter,
+        # rechtstreeks uit sales_df halen
+
+        history = sales_df.copy()
+
+        history = history[
+            history["cas_normalized"] == selected_cas
+        ]
+
+        if customer_filter is not None:
+            history = history[
+                history["customer_display"]
+                == customer_filter
+            ]
+
+        history = history.sort_values(
+            "sales_date",
+            ascending=False,
         )
 
-        if sales_info["sold"]:
-
-            history = sales_info["history"].copy()
-
-            history = history.sort_values(
-                "sales_date",
-                ascending=False,
-            )
+        if not history.empty:
 
             latest_sale = history.iloc[0]
 
@@ -775,12 +781,8 @@ try:
 
                 st.write(
                     "**Last sales date:**",
-                    latest_sale["sales_date"].strftime(
-                        "%d/%m/%Y"
-                    )
-                    if pd.notna(
-                        latest_sale["sales_date"]
-                    )
+                    latest_sale["sales_date"].strftime("%d/%m/%Y")
+                    if pd.notna(latest_sale["sales_date"])
                     else "-"
                 )
 
@@ -789,7 +791,7 @@ try:
                     latest_sale.get(
                         "sales_order",
                         "-"
-                    ),
+                    )
                 )
 
             with col2:
@@ -799,7 +801,7 @@ try:
                     latest_sale.get(
                         "sales_price",
                         "-"
-                    ),
+                    )
                 )
 
                 st.write(
@@ -807,27 +809,60 @@ try:
                     latest_sale.get(
                         "sales_quantity",
                         "-"
-                    ),
+                    )
                 )
 
             st.write("### Sales History")
 
-            display_columns = [
-                "sales_date",
-                "customer_name",
-                "product_description",
-                "sales_order",
-                "sales_quantity",
-                "sales_price",
-                "sales_value",
-                "document_number",
-            ]
+            st.dataframe(
+                history[
+                    [
+                        "sales_date",
+                        "customer_name",
+                        "sales_order",
+                        "sales_quantity",
+                        "sales_price",
+                        "sales_value",
+                        "document_number",
+                    ]
+                ],
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "sales_date":
+                        st.column_config.DateColumn(
+                            "Date",
+                            format="DD/MM/YYYY"
+                        ),
+                    "customer_name":
+                        "Customer",
+                    "sales_order":
+                        "Sales Order",
+                    "sales_quantity":
+                        st.column_config.NumberColumn(
+                            "Quantity",
+                            format="%.2f"
+                        ),
+                    "sales_price":
+                        st.column_config.NumberColumn(
+                            "Unit Price",
+                            format="%.2f"
+                        ),
+                    "sales_value":
+                        st.column_config.NumberColumn(
+                            "Sales Value",
+                            format="%.2f"
+                        ),
+                    "document_number":
+                        "Document",
+                }
+            )
 
-            existing_columns = [
-                c
-                for c in display_columns
-                if c in history.columns
-            ]
+        else:
+
+            st.info(
+                "No sales found for this customer."
+            )
 
             st.dataframe(
                 history[

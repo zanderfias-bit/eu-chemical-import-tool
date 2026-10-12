@@ -171,6 +171,7 @@ def get_sales_information(
         matches["Documentdatum"]
         == last_sales_date
     ]
+    print (latest_sales)
 
     return {
         "sold": True,
