@@ -172,39 +172,49 @@ if st.button(
         st.info(str(error))
         st.stop()
 # --------------------------------------------------
-# PURCHASE HISTORY
+# PURCHASE & SALES HISTORY
 # --------------------------------------------------
 
+BASE_DIR = Path(__file__).resolve().parent
+
+purchase_df = None
+sales_df = None
+
 PURCHASE_HISTORY_FILE = (
-    "data/aankoop orders product - leverancier.xlsx"
+    BASE_DIR
+    / "data"
+    / "aankoop orders product - leverancier.xlsx"
+)
+
+SALES_HISTORY_FILE = (
+    BASE_DIR
+    / "data"
+    / "Sales information.xlsx"
 )
 
 try:
+
     purchase_df = load_purchase_history(
         PURCHASE_HISTORY_FILE
     )
-    SALES_HISTORY_FILE = (
-        BASE_DIR
-        / "data"
-        / "Sales information.xlsx"
+
+except Exception as e:
+
+    st.error(
+        f"Purchase history error: {e}"
     )
 
-    try:
-        sales_df = load_sales_history(
-            SALES_HISTORY_FILE
-        )
-    except Exception as e:
-        st.warning(
-            f"Sales history not loaded: {e}"
-        )
-        sales_df = None
+try:
 
+    sales_df = load_sales_history(
+        SALES_HISTORY_FILE
+    )
 
-except FileNotFoundError:
-    purchase_df = None
+except Exception as e:
 
-except Exception:
-    purchase_df = None
+    st.error(
+        f"Sales history error: {e}"
+    )
 
 # --------------------------------------------------
 # DISPLAY RESULTS
