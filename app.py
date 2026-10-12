@@ -12,6 +12,11 @@ from services.purchase_history import (
     load_purchase_history,
     get_purchase_information,
 )
+from services.sales_history import (
+    load_sales_history,
+    get_customers_for_cas,
+    get_sales_information,
+)
 
 # --------------------------------------------------
 # CACHE FUNCTIONS
@@ -676,6 +681,221 @@ try:
             )
 except Exception:
     pass
+
+# --------------------------------------------------
+# SALES HISTORY LOOKUP
+# --------------------------------------------------
+try:
+    if (
+        selected_row is not None
+        and sales_df is not None
+    ):
+        selected_cas = selected_row.get("CAS Number")
+
+        customers = get_customers_for_cas(
+            sales_df,
+            selected_cas,
+        )
+
+        st.subheader("Sales History")
+
+        if customers:
+            customer_options = [
+                "All customers",
+                *customers,
+            ]
+
+            selected_customer = st.selectbox(
+                "Customer",
+                options=customer_options,
+                key="sales_customer_selector",
+            )
+
+            customer_filter = (
+                None
+                if selected_customer == "All customers"
+                else selected_customer
+            )
+
+            sales_info = get_sales_information(
+                sales_df,
+                selected_cas,
+                customer_filter,
+            )
+
+            if sales_info["sold"]:
+                st.success(
+                    "This product has previously been sold."
+                )
+
+                last_sales_date = sales_info.get(
+                    "last_sales_date"
+                )
+
+                if pd.notna(last_sales_date):
+                    last_sales_date_text = (
+                        last_sales_date.strftime("%d/%m/%Y")
+                    )
+                else:
+                    last_sales_date_text = (
+                        "Date not available"
+                    )
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    st.write(
+                        "**Last sales date:**",
+                        last_sales_date_text,
+                    )
+
+                    st.write(
+                        "**Selected customer:**",
+                        selected_customer,
+                    )
+
+                with col2:
+                    st.write(
+                        "**Sales lines found:**",
+                        sales_info["sales_line_count"],
+                    )
+
+                    st.write(
+                        "**Customers found:**",
+                        sales_info["customer_count"],
+                    )
+
+                latest_sales = sales_info[
+                    "latest_sales"
+                ].copy()
+
+                latest_display_columns = [
+                    "customer_name",
+                    "product_description",
+                    "article_reference",
+                    "sales_price",
+                    "sales_quantity",
+                    "sales_order",
+                ]
+
+                existing_latest_columns = [
+                    column
+                    for column in latest_display_columns
+                    if column in latest_sales.columns
+                ]
+
+                st.write("**Most recent sale:**")
+
+                st.dataframe(
+                    latest_sales[
+                        existing_latest_columns
+                    ],
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "customer_name": "Customer",
+                        "product_description": (
+                            "Sold product"
+                        ),
+                        "article_reference": (
+                            "Article reference"
+                        ),
+                        "sales_price": (
+                            st.column_config.NumberColumn(
+                                "Unit sales price",
+                                format="%.2f",
+                            )
+                        ),
+                        "sales_quantity": (
+                            st.column_config.NumberColumn(
+                                "Quantity",
+                                format="%.2f",
+                            )
+                        ),
+                        "sales_order": "Sales order",
+                    },
+                )
+
+                with st.expander(
+                    "View complete sales history"
+                ):
+                    history = sales_info[
+                        "history"
+                    ].copy()
+
+                    history_display_columns = [
+                        "sales_date",
+                        "customer_name",
+                        "product_description",
+                        "article_reference",
+                        "sales_quantity",
+                        "sales_price",
+                        "sales_value",
+                        "sales_order",
+                        "document_number",
+                    ]
+
+                    existing_history_columns = [
+                        column
+                        for column in history_display_columns
+                        if column in history.columns
+                    ]
+
+                    st.dataframe(
+                        history[
+                            existing_history_columns
+                        ],
+                        hide_index=True,
+                        width="stretch",
+                        column_config={
+                            "sales_date": (
+                                st.column_config.DateColumn(
+                                    "Sales date",
+                                    format="DD/MM/YYYY",
+                                )
+                            ),
+                            "customer_name": "Customer",
+                            "product_description": (
+                                "Sold product"
+                            ),
+                            "article_reference": (
+                                "Article reference"
+                            ),
+                            "sales_quantity": (
+                                st.column_config.NumberColumn(
+                                    "Quantity",
+                                    format="%.2f",
+                                )
+                            ),
+                            "sales_price": (
+                                st.column_config.NumberColumn(
+                                    "Unit sales price",
+                                    format="%.2f",
+                                )
+                            ),
+                            "sales_value": (
+                                st.column_config.NumberColumn(
+                                    "Sales value",
+                                    format="%.2f",
+                                )
+                            ),
+                            "sales_order": "Sales order",
+                            "document_number": (
+                                "Document number"
+                            ),
+                        },
+                    )
+
+        else:
+            st.info(
+                "No sales history was found for this CAS number."
+            )
+
+except Exception as error:
+    st.error(
+        "Sales history could not be displayed."
+    )
+    st.code(str(error))
 
 if st.button(
     "Clear Cache"
