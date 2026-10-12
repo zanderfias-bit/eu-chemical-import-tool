@@ -902,11 +902,6 @@ try:
                },
             )
 
-        else:
-
-            st.info(
-                "No sales history found."
-            )
 
 except Exception :
     pass
