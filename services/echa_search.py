@@ -309,15 +309,16 @@ def print_page_diagnostics(page, body_text=None):
 def wait_for_echa_content(page, cas_number):
     try:
         page.wait_for_function(
-            """
-            casNumber => {
+            f"""
+            () => {{
                 const bodyText =
-                    document.body?.innerText || "";
+                    document.body
+                    ? document.body.innerText
+                    : "";
 
-                return bodyText.includes(casNumber);
-            }
+                return bodyText.includes("{cas_number}");
+            }}
             """,
-            cas_number,
             timeout=30000,
         )
 
