@@ -318,6 +318,7 @@ def search_echa(cas_number):
                             f"ECHA returned HTTP status "
                             f"{response.status}"
                         )
+                print("CURRENT URL:", page.url)
 
                 rows = page.locator(
                     "table tbody tr"

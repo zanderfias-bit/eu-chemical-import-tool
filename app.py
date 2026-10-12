@@ -863,11 +863,11 @@ try:
 except Exception:
     pass
 
-if st.button(
-    "Clear Cache"
-):
-    st.cache_data.clear()
-
-    st.success(
-        "Cache cleared."
-    )
+#if st.button(
+#    "Clear Cache"
+#):
+#    st.cache_data.clear()
+#
+#    st.success(
+#        "Cache cleared."
+#    )
