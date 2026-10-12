@@ -167,80 +167,145 @@ def looks_like_ec_number(value):
 # --------------------------------------------------
 # CLICK BUTTON IF VISIBLE
 # --------------------------------------------------
-def click_button_if_visible(page, button_name):
-    try:
-        button = page.get_by_role(
-            "button",
-            name=button_name,
-            exact=False,
-        ).first
+def click_button_if_visible(container, button_name):
+    """
+    Find and click consent controls regardless of whether they
+    are implemented as buttons, links, or generic text elements.
+    """
 
-        if button.count() == 0:
-            return False
+    selectors = [
+        f'button:has-text("{button_name}")',
+        f'a:has-text("{button_name}")',
+        f'[role="button"\]:has-text("{button_name}")',
+        f'text="{button_name}"',
+    ]
 
-        if not button.is_visible():
-            return False
+    for selector in selectors:
+        try:
+            locator = container.locator(selector).first
 
-        print(
-            f"Clicking ECHA button: {button_name}",
-            flush=True,
-        )
+            if locator.count() == 0:
+                continue
 
-        button.click(
-            timeout=10000,
-        )
+            locator.wait_for(
+                state="visible",
+                timeout=3000,
+            )
 
-        page.wait_for_timeout(
-            1500
-        )
+            print(
+                f"Found ECHA consent control "
+                f"'{button_name}' using {selector}",
+                flush=True,
+            )
 
-        return True
+            locator.click(
+                timeout=10000,
+                force=True,
+            )
 
-    except PlaywrightError as error:
-        print(
-            f"Could not click '{button_name}': {error}",
-            flush=True,
-        )
+            print(
+                f"Clicked ECHA consent control: "
+                f"{button_name}",
+                flush=True,
+            )
 
-        return False
+            return True
 
+        except PlaywrightTimeoutError:
+            continue
+
+        except PlaywrightError as error:
+            print(
+                f"Could not click '{button_name}' "
+                f"using {selector}: {error}",
+                flush=True,
+            )
+
+    return False
 
 # --------------------------------------------------
 # HANDLE ECHA COOKIE AND LEGAL NOTICES
 # --------------------------------------------------
 def handle_echa_consent(page):
-    consent_clicked = False
-
-    cookie_button_names = [
+    consent_names = [
         "Accept only essential cookies",
         "Accept all cookies",
-    ]
-
-    for button_name in cookie_button_names:
-        if click_button_if_visible(
-            page,
-            button_name,
-        ):
-            consent_clicked = True
-            break
-
-    legal_button_names = [
         "I Accept the terms",
         "I accept the terms",
         "Accept the terms",
         "I Accept",
     ]
 
-    for button_name in legal_button_names:
+    # First search the main page.
+    for consent_name in consent_names:
         if click_button_if_visible(
             page,
-            button_name,
+            consent_name,
         ):
-            consent_clicked = True
-            break
+            page.wait_for_timeout(2000)
+            return True
 
-    return consent_clicked
+    # If not found, search all frames.
+    print(
+        f"Consent control not found in main page. "
+        f"Checking {len(page.frames)} frame(s).",
+        flush=True,
+    )
 
+    for frame_index, frame in enumerate(page.frames):
+        try:
+            print(
+                f"Checking frame {frame_index}: "
+                f"{frame.url}",
+                flush=True,
+            )
+
+            for consent_name in consent_names:
+                if click_button_if_visible(
+                    frame,
+                    consent_name,
+                ):
+                    page.wait_for_timeout(2000)
+                    return True
+
+        except PlaywrightError as error:
+            print(
+                f"Could not inspect frame "
+                f"{frame_index}: {error}",
+                flush=True,
+            )
+
+    print(
+        "No clickable ECHA consent control was found.",
+        flush=True,
+    )
+
+    return False
+
+def legal_notice_is_active(page):
+    try:
+        body_text = page.locator(
+            "body"
+        ).inner_text(
+            timeout=10000
+        )
+
+        indicators = [
+            "Accept only essential cookies",
+            "Accept all cookies",
+            "The European Chemicals Agency",
+            "1. Disclaimer",
+        ]
+
+        matches = sum(
+            indicator in body_text
+            for indicator in indicators
+        )
+
+        return matches >= 3
+
+    except PlaywrightError:
+        return False
 
 # --------------------------------------------------
 # READ BODY TEXT
@@ -609,10 +674,29 @@ def search_echa(cas_number):
                     page
                 )
 
-                # Reload the search URL if consent was accepted.
+                # --------------------------------------------------
+                # HANDLE ECHA CONSENT
+                # --------------------------------------------------
+                consent_clicked = handle_echa_consent(page)
+
                 if consent_clicked:
                     print(
-                        "Reloading ECHA search after consent",
+                        "ECHA consent was clicked",
+                        flush=True,
+                    )
+
+                    try:
+                        page.wait_for_load_state(
+                            "domcontentloaded",
+                            timeout=15000,
+                        )
+                    except PlaywrightTimeoutError:
+                        pass
+
+                    page.wait_for_timeout(3000)
+
+                    print(
+                        "Reloading the ECHA search after consent",
                         flush=True,
                     )
 
@@ -631,9 +715,51 @@ def search_echa(cas_number):
                             f"{response.status}"
                         )
 
-                    page.wait_for_timeout(
-                        2000
+                    page.wait_for_timeout(5000)
+
+                else:
+                    print(
+                        "WARNING: ECHA consent was not clicked",
+                        flush=True,
                     )
+
+
+                # --------------------------------------------------
+                # VERIFY THAT LEGAL NOTICE IS NO LONGER ACTIVE
+                # --------------------------------------------------
+                if legal_notice_is_active(page):
+                    print(
+                        "ECHA legal notice is still active. "
+                        "Trying consent once more.",
+                        flush=True,
+                    )
+
+                    second_consent_clicked = handle_echa_consent(
+                        page
+                    )
+
+                    if second_consent_clicked:
+                        page.wait_for_timeout(2000)
+
+                        page.goto(
+                            search_url,
+                            wait_until="domcontentloaded",
+                            timeout=60000,
+                        )
+
+                        page.wait_for_timeout(5000)
+
+
+                if legal_notice_is_active(page):
+                    print(
+                        "ERROR: ECHA is still displaying its "
+                        "legal notice after the consent attempts.",
+                        flush=True,
+                    )
+
+                    print_page_diagnostics(page)
+
+                    return []
 
                     # Check for a second consent notice.
                     second_consent_clicked = (
