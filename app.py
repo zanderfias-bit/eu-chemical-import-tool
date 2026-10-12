@@ -744,7 +744,7 @@ try:
             customer_filter,
         )
 
-        if sales_info["sold"\]:
+        if sales_info["sold"]:
 
             history = sales_info["history"].copy()
 
@@ -863,13 +863,8 @@ try:
                 "No sales history found."
             )
 
-except Exception as error:
-
-    st.error(
-        "Sales history could not be displayed."
-    )
-
-    st.code(str(error))
+except Exception :
+    pass
 
 if st.button(
     "Clear Cache"
