@@ -743,7 +743,7 @@ if (
         else selected_customer,
     )
 
-    if sales_info["sold"\]:
+    if sales_info["sold"]:
 
         latest_sales = sales_info[
             "latest_sales"
