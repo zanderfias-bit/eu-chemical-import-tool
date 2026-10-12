@@ -752,9 +752,25 @@ try:
 
         history = sales_df.copy()
 
+        st.write("Selected CAS:", selected_cas)
+
+        st.write(
+            "Aantal records in sales file:",
+            len(history)
+        )
+
         history = history[
-            history["cas_normalized"] == selected_cas
+            history["cas_normalized"]
+                .astype(str)
+                .str.strip()
+                ==
+            str(selected_cas).strip()
         ]
+
+        st.write(
+            "Aantal records na CAS filter:",
+            len(history)
+        )
 
         if customer_filter is not None:
             history = history[
