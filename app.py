@@ -711,155 +711,157 @@ except Exception:
 # --------------------------------------------------
 # SALES HISTORY LOOKUP
 # --------------------------------------------------
+try:
+    if (
+        selected_row is not None
+        and sales_df is not None
+    ):
 
-if (
-    selected_row is not None
-    and sales_df is not None
-):
+        st.subheader("Sales History")
 
-    st.subheader("Sales History")
-
-    customers = get_customers_for_cas(
-        sales_df,
-        selected_cas,
-    )
-
-    customer_options = ["All customers"]
-
-    if customers:
-        customer_options.extend(customers)
-
-    selected_customer = st.selectbox(
-        "Customer",
-        customer_options,
-        key="sales_customer_selector",
-    )
-
-    sales_info = get_sales_information(
-        sales_df,
-        selected_cas,
-        None
-        if selected_customer == "All customers"
-        else selected_customer,
-    )
-
-    if sales_info["sold"]:
-
-        latest_sales = sales_info[
-            "latest_sales"
-        ].copy()
-
-        history = sales_info[
-            "history"
-        ].copy()
-
-        latest_sale = history.iloc[0]
-
-        st.success(
-            f"{sales_info['sales_line_count']} sales records found"
+        customers = get_customers_for_cas(
+            sales_df,
+            selected_cas,
         )
 
-        st.write("### Last Sale")
+        customer_options = ["All customers"]
 
-        col1, col2 = st.columns(2)
+        if customers:
+            customer_options.extend(customers)
 
-        with col1:
-
-            st.write(
-                "**Date:**",
-                latest_sale["sales_date"].strftime("%d/%m/%Y")
-                if pd.notna(latest_sale["sales_date"])
-                else "-"
-            )
-
-            st.write(
-                "**Sales Order:**",
-                latest_sale.get(
-                    "sales_order",
-                    "-"
-                )
-            )
-
-        with col2:
-
-            st.write(
-                "**Unit Price:**",
-                latest_sale.get(
-                    "sales_price",
-                    "-"
-                )
-            )
-
-            st.write(
-                "**Quantity:**",
-                latest_sale.get(
-                    "sales_quantity",
-                    "-"
-                )
-            )
-
-        st.write("### Sales History")
-
-        history_columns = [
-            "sales_date",
-            "customer_name",
-            "product_description",
-            "sales_order",
-            "sales_quantity",
-            "sales_price",
-            "sales_value",
-            "document_number",
-        ]
-
-        existing_columns = [
-            c
-            for c in history_columns
-            if c in history.columns
-        ]
-
-        st.dataframe(
-            history[
-                existing_columns
-            ],
-            hide_index=True,
-            width="stretch",
-            column_config={
-                "sales_date":
-                    st.column_config.DateColumn(
-                        "Date",
-                        format="DD/MM/YYYY",
-                    ),
-                "customer_name":
-                    "Customer",
-                "product_description":
-                    "Product",
-                "sales_order":
-                    "Sales Order",
-                "sales_quantity":
-                    st.column_config.NumberColumn(
-                        "Quantity",
-                        format="%.2f",
-                    ),
-                "sales_price":
-                    st.column_config.NumberColumn(
-                        "Unit Price",
-                        format="%.2f",
-                    ),
-                "sales_value":
-                    st.column_config.NumberColumn(
-                        "Sales Value",
-                        format="%.2f",
-                    ),
-                "document_number":
-                    "Document Number",
-            },
+        selected_customer = st.selectbox(
+            "Customer",
+            customer_options,
+            key="sales_customer_selector",
         )
 
-    else:
-
-        st.info(
-            "No sales records found."
+        sales_info = get_sales_information(
+            sales_df,
+            selected_cas,
+            None
+            if selected_customer == "All customers"
+            else selected_customer,
         )
+
+        if sales_info["sold"]:
+
+            latest_sales = sales_info[
+                "latest_sales"
+            ].copy()
+
+            history = sales_info[
+                "history"
+            ].copy()
+
+            latest_sale = history.iloc[0]
+
+            st.success(
+                f"{sales_info['sales_line_count']} sales records found"
+            )
+
+            st.write("### Last Sale")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                st.write(
+                    "**Date:**",
+                    latest_sale["sales_date"].strftime("%d/%m/%Y")
+                    if pd.notna(latest_sale["sales_date"])
+                    else "-"
+                )
+
+                st.write(
+                    "**Sales Order:**",
+                    latest_sale.get(
+                        "sales_order",
+                        "-"
+                    )
+                )
+
+            with col2:
+
+                st.write(
+                    "**Unit Price:**",
+                    latest_sale.get(
+                        "sales_price",
+                        "-"
+                    )
+                )
+
+                st.write(
+                    "**Quantity:**",
+                    latest_sale.get(
+                        "sales_quantity",
+                        "-"
+                    )
+                )
+
+            st.write("### Sales History")
+
+            history_columns = [
+                "sales_date",
+                "customer_name",
+                "product_description",
+                "sales_order",
+                "sales_quantity",
+                "sales_price",
+                "sales_value",
+                "document_number",
+            ]
+
+            existing_columns = [
+                c
+                for c in history_columns
+                if c in history.columns
+            ]
+
+            st.dataframe(
+                history[
+                    existing_columns
+                ],
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "sales_date":
+                        st.column_config.DateColumn(
+                            "Date",
+                            format="DD/MM/YYYY",
+                        ),
+                    "customer_name":
+                        "Customer",
+                    "product_description":
+                        "Product",
+                    "sales_order":
+                        "Sales Order",
+                    "sales_quantity":
+                        st.column_config.NumberColumn(
+                            "Quantity",
+                            format="%.2f",
+                        ),
+                    "sales_price":
+                        st.column_config.NumberColumn(
+                            "Unit Price",
+                            format="%.2f",
+                        ),
+                    "sales_value":
+                        st.column_config.NumberColumn(
+                            "Sales Value",
+                            format="%.2f",
+                        ),
+                    "document_number":
+                        "Document Number",
+                },
+            )
+
+        else:
+
+            st.info(
+                "No sales records found."
+            )
+except Exception:
+    pass
 
 if st.button(
     "Clear Cache"
