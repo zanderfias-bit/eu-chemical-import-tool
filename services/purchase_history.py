@@ -42,9 +42,6 @@ def normalize_cas(value):
 def normalize_currency(value):
     """
     Normalize the currency code.
-
-    Empty currency cells remain empty. No currency is assumed,
-    because the Excel file contains rows where the currency is blank.
     """
 
     if value is None or pd.isna(value):
@@ -88,14 +85,20 @@ def normalize_purchase_price(value):
         else:
             # International format: 1,234.56
             value = value.replace(",", "")
+
     elif "," in value:
         # Decimal comma: 15,40
         value = value.replace(",", ".")
 
-    return pd.to_numeric(
+    numeric_value = pd.to_numeric(
         value,
         errors="coerce",
     )
+
+    if pd.isna(numeric_value):
+        return None
+
+    return float(numeric_value)
 
 
 @st.cache_data(ttl=86400)
@@ -189,14 +192,20 @@ def load_purchase_history(file_path):
         .str.strip()
     )
 
+    df["product_description"] = (
+        df["product_description"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+    )
+
     df = df[
         ~df["article_reference"]
         .str.upper()
         .isin(EXCLUDED_ARTICLE_REFERENCES)
     ].copy()
 
-    # Rows without a usable CAS number cannot be matched
-    # against the ECHA result.
+    # Rows without a usable CAS number cannot be matched.
     df = df[
         df["cas_normalized"].notna()
     ].copy()
@@ -212,8 +221,7 @@ def get_purchase_information(
     Find all purchases matching the supplied CAS number.
 
     The most recent document date is treated as the
-    last purchase date. Prices and currencies are taken
-    from all purchase lines on that date.
+    last purchase date.
     """
 
     normalized_cas = normalize_cas(
@@ -258,8 +266,6 @@ def get_purchase_information(
         "purchase_date"
     ].max()
 
-    # Multiple lines can exist on the latest purchase date,
-    # for example for different packaging types or suppliers.
     latest_purchases = matches[
         matches["purchase_date"]
         == latest_purchase_date
@@ -291,8 +297,6 @@ def get_purchase_information(
         if supplier
     ]
 
-    # Build a clean list containing the price and currency
-    # for each line on the most recent purchase date.
     latest_price_details = []
 
     for _, row in latest_purchases.iterrows():
@@ -332,6 +336,7 @@ def get_purchase_information(
     valid_prices = (
         latest_purchases["purchase_price"]
         .dropna()
+        .astype(float)
         .tolist()
     )
 
@@ -354,13 +359,9 @@ def get_purchase_information(
         "last_purchase_date": latest_purchase_date,
         "last_suppliers": latest_suppliers,
         "all_suppliers": suppliers,
-
-        # New price and currency results
         "last_purchase_prices": valid_prices,
         "last_purchase_currencies": latest_currencies,
         "latest_price_details": latest_price_details,
-
-        # Existing detailed results
         "latest_purchases": latest_purchases,
         "history": matches,
         "purchase_line_count": len(matches),
