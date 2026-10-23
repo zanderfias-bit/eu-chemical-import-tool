@@ -807,6 +807,7 @@ try:
                 "sales_order",
                 "sales_quantity",
                 "sales_price",
+                "currency",
                 "sales_value",
                 "document_number",
             ]
@@ -850,6 +851,7 @@ try:
                             "Sales Value",
                             format="%.2f",
                         ),
+                    "currency": "Currency",
                     "document_number":
                         "Document Number",
                 },

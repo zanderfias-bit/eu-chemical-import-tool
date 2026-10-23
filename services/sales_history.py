@@ -85,6 +85,7 @@ def load_sales_history(file_path):
             "Aankooporder": "purchase_order",
             "Verkooporder": "sales_order",
             "Eenheidsprijs": "sales_price",
+            "Valuta": "currency",
             "Verkopen": "sales_quantity",
             "Basis BTW in basisva": "sales_value",
         }
@@ -115,7 +116,20 @@ def load_sales_history(file_path):
         .astype(str)
         .str.strip()
     )
+    # -------------------------
+    # CURRENCY
+    # -------------------------
 
+    if "currency" not in sales_df.columns:
+        sales_df["currency"] = ""
+
+    sales_df["currency"] = (
+        sales_df["currency"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
     # -------------------------
     # DATE
     # -------------------------
