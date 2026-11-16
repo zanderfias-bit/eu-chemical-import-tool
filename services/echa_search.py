@@ -11,7 +11,18 @@ from playwright.sync_api import (
 # --------------------------------------------------
 # VERSION
 # --------------------------------------------------
-CODE_VERSION = "ECHA_SEARCH_SESSION_V14"
+CODE_VERSION = "ECHA_SEARCH_VERIFICATION_TEST_V15"
+
+
+# --------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------
+VERIFICATION_MAX_WAIT_SECONDS = 60
+VERIFICATION_CHECK_INTERVAL_SECONDS = 5
+
+DEFAULT_TIMEOUT_MS = 15000
+NAVIGATION_TIMEOUT_MS = 60000
+DOM_TIMEOUT_MS = 30000
 
 
 # --------------------------------------------------
@@ -109,34 +120,6 @@ validate_url(
 
 
 # --------------------------------------------------
-# RESOURCE FILTER
-# --------------------------------------------------
-def block_unnecessary_resources(route):
-    """
-    Block resources that are not required for extracting
-    ECHA search results.
-    """
-
-    try:
-        resource_type = route.request.resource_type
-
-        if resource_type in {
-            "image",
-            "media",
-            "font",
-        }:
-            route.abort()
-        else:
-            route.continue_()
-
-    except PlaywrightError:
-        try:
-            route.continue_()
-        except PlaywrightError:
-            pass
-
-
-# --------------------------------------------------
 # NORMALISE TEXT
 # --------------------------------------------------
 def normalise_text(value):
@@ -144,7 +127,9 @@ def normalise_text(value):
         return ""
 
     return " ".join(
-        str(value).replace("\xa0", " ").split()
+        str(value)
+        .replace("\xa0", " ")
+        .split()
     ).strip()
 
 
@@ -174,166 +159,6 @@ def looks_like_ec_number(value):
             value,
         )
     )
-
-
-# --------------------------------------------------
-# CLICK BUTTON IF VISIBLE
-# --------------------------------------------------
-def click_button_if_visible(container, button_name):
-    """
-    Find and click an ECHA consent control when present.
-    """
-
-    selectors = [
-        f'button:has-text("{button_name}")',
-        f'a:has-text("{button_name}")',
-        f'[role="button"]:has-text("{button_name}")',
-        f'text="{button_name}"',
-    ]
-
-    for selector in selectors:
-        try:
-            locator = container.locator(selector).first
-
-            if locator.count() == 0:
-                continue
-
-            if not locator.is_visible(timeout=1000):
-                continue
-
-            print(
-                f"Found ECHA consent control "
-                f"'{button_name}' using {selector}",
-                flush=True,
-            )
-
-            locator.click(
-                timeout=5000,
-                force=True,
-            )
-
-            print(
-                f"Clicked ECHA consent control: "
-                f"{button_name}",
-                flush=True,
-            )
-
-            return True
-
-        except PlaywrightTimeoutError:
-            continue
-
-        except PlaywrightError as error:
-            print(
-                f"Could not click '{button_name}' "
-                f"using {selector}: {error}",
-                flush=True,
-            )
-
-    return False
-
-
-# --------------------------------------------------
-# HANDLE ECHA COOKIE AND LEGAL NOTICES
-# --------------------------------------------------
-def handle_echa_consent(page):
-    consent_names = [
-        "Accept only essential cookies",
-        "Accept all cookies",
-        "I Accept the terms",
-        "I accept the terms",
-        "Accept the terms",
-        "I Accept",
-    ]
-
-    print(
-        "Checking ECHA consent controls on the main page",
-        flush=True,
-    )
-
-    for consent_name in consent_names:
-        if click_button_if_visible(
-            page,
-            consent_name,
-        ):
-            page.wait_for_timeout(2000)
-            return True
-
-    print(
-        f"Consent control not found on main page. "
-        f"Checking {len(page.frames)} frame(s).",
-        flush=True,
-    )
-
-    for frame_index, frame in enumerate(page.frames):
-        try:
-            print(
-                f"Checking frame {frame_index}: "
-                f"{frame.url}",
-                flush=True,
-            )
-
-            for consent_name in consent_names:
-                if click_button_if_visible(
-                    frame,
-                    consent_name,
-                ):
-                    page.wait_for_timeout(2000)
-                    return True
-
-        except PlaywrightError as error:
-            print(
-                f"Could not inspect frame "
-                f"{frame_index}: {error}",
-                flush=True,
-            )
-
-    print(
-        "No clickable ECHA consent control was found.",
-        flush=True,
-    )
-
-    return False
-
-
-# --------------------------------------------------
-# CHECK WHETHER LEGAL NOTICE IS ACTIVE
-# --------------------------------------------------
-def legal_notice_is_active(page):
-    try:
-        body_text = page.locator(
-            "body"
-        ).inner_text(
-            timeout=10000
-        )
-
-        indicators = [
-            "Accept only essential cookies",
-            "Accept all cookies",
-            "The European Chemicals Agency",
-            "1. Disclaimer",
-        ]
-
-        matches = sum(
-            indicator in body_text
-            for indicator in indicators
-        )
-
-        print(
-            f"ECHA legal notice indicator matches: {matches}",
-            flush=True,
-        )
-
-        return matches >= 3
-
-    except PlaywrightError as error:
-        print(
-            f"Could not determine whether the ECHA "
-            f"legal notice is active: {error}",
-            flush=True,
-        )
-
-        return False
 
 
 # --------------------------------------------------
@@ -399,15 +224,381 @@ def print_page_diagnostics(page, body_text=None):
 
 
 # --------------------------------------------------
-# GENERIC ECHA PAGE NAVIGATION
+# DETECT BLOCK / VERIFICATION PAGE
 # --------------------------------------------------
-def open_echa_page(page, url, description):
+def page_looks_blocked(page):
     """
-    Open an ECHA page.
+    Determine whether Chromium is still showing the
+    Azure 403 / intermediate access-control response.
 
-    We first wait only until navigation has committed.
-    DOM loading is handled separately so slow JavaScript
-    resources cannot block the entire search operation.
+    This function does not attempt to solve or bypass
+    any interactive verification challenge.
+    """
+
+    try:
+        title = normalise_text(
+            page.title()
+        )
+
+    except PlaywrightError:
+        title = ""
+
+    body_text = read_body_text(
+        page
+    )
+
+    combined_text = (
+        title
+        + " "
+        + body_text
+    ).lower()
+
+    blocked_indicators = [
+        "403 forbidden",
+        "microsoft-azure-application-gateway",
+    ]
+
+    return any(
+        indicator in combined_text
+        for indicator in blocked_indicators
+    )
+
+
+# --------------------------------------------------
+# WAIT FOR POSSIBLE VERIFICATION PAGE
+# --------------------------------------------------
+def wait_for_verification_to_clear(
+    page,
+    description,
+):
+    """
+    Wait for a temporary access-control / verification
+    page to clear by itself.
+
+    No CAPTCHA or interactive verification mechanism is
+    clicked or bypassed here.
+    """
+
+    print(
+        f"{description} appears to be blocked or "
+        f"behind an intermediate verification page.",
+        flush=True,
+    )
+
+    print(
+        f"Waiting up to "
+        f"{VERIFICATION_MAX_WAIT_SECONDS} seconds "
+        f"for the browser session to continue naturally.",
+        flush=True,
+    )
+
+    elapsed_seconds = 0
+
+    while (
+        elapsed_seconds
+        < VERIFICATION_MAX_WAIT_SECONDS
+    ):
+        page.wait_for_timeout(
+            VERIFICATION_CHECK_INTERVAL_SECONDS
+            * 1000
+        )
+
+        elapsed_seconds += (
+            VERIFICATION_CHECK_INTERVAL_SECONDS
+        )
+
+        print(
+            f"ECHA verification wait: "
+            f"{elapsed_seconds} seconds",
+            flush=True,
+        )
+
+        try:
+            title = normalise_text(
+                page.title()
+            )
+
+        except PlaywrightError as error:
+            title = ""
+
+            print(
+                f"Could not read page title: {error}",
+                flush=True,
+            )
+
+        try:
+            body_text = read_body_text(
+                page
+            )
+
+            print(
+                f"Current title: {title}",
+                flush=True,
+            )
+
+            print(
+                f"Current URL: {page.url}",
+                flush=True,
+            )
+
+            print(
+                "Current body start: "
+                f"{body_text[:500]}",
+                flush=True,
+            )
+
+            if not page_looks_blocked(page):
+                print(
+                    f"{description} no longer shows "
+                    f"the Azure 403 response.",
+                    flush=True,
+                )
+
+                print(
+                    f"Verification/block page cleared "
+                    f"after approximately "
+                    f"{elapsed_seconds} seconds.",
+                    flush=True,
+                )
+
+                try:
+                    page.wait_for_load_state(
+                        "domcontentloaded",
+                        timeout=DOM_TIMEOUT_MS,
+                    )
+
+                    print(
+                        "DOM content loaded after "
+                        "verification",
+                        flush=True,
+                    )
+
+                except PlaywrightTimeoutError:
+                    print(
+                        "DOM content did not fully finish "
+                        "loading after verification. "
+                        "Continuing with the rendered page.",
+                        flush=True,
+                    )
+
+                return True
+
+        except PlaywrightError as error:
+            print(
+                f"Could not inspect verification page: "
+                f"{error}",
+                flush=True,
+            )
+
+    print(
+        f"ERROR: {description} is still blocked "
+        f"after {VERIFICATION_MAX_WAIT_SECONDS} seconds.",
+        flush=True,
+    )
+
+    print_page_diagnostics(
+        page
+    )
+
+    return False
+
+
+# --------------------------------------------------
+# CLICK BUTTON IF VISIBLE
+# --------------------------------------------------
+def click_button_if_visible(
+    container,
+    button_name,
+):
+    """
+    Find and click a normal ECHA consent control.
+
+    This only handles ordinary cookie/legal consent
+    controls. It does not interact with CAPTCHA or
+    anti-bot verification challenges.
+    """
+
+    selectors = [
+        f'button:has-text("{button_name}")',
+        f'a:has-text("{button_name}")',
+        f'[role="button"]:has-text("{button_name}")',
+        f'text="{button_name}"',
+    ]
+
+    for selector in selectors:
+        try:
+            locator = container.locator(
+                selector
+            ).first
+
+            if locator.count() == 0:
+                continue
+
+            if not locator.is_visible(
+                timeout=1000
+            ):
+                continue
+
+            print(
+                f"Found ECHA consent control "
+                f"'{button_name}' using {selector}",
+                flush=True,
+            )
+
+            locator.click(
+                timeout=5000,
+                force=True,
+            )
+
+            print(
+                f"Clicked ECHA consent control: "
+                f"{button_name}",
+                flush=True,
+            )
+
+            return True
+
+        except PlaywrightTimeoutError:
+            continue
+
+        except PlaywrightError as error:
+            print(
+                f"Could not click '{button_name}' "
+                f"using {selector}: {error}",
+                flush=True,
+            )
+
+    return False
+
+
+# --------------------------------------------------
+# HANDLE ECHA COOKIE AND LEGAL NOTICES
+# --------------------------------------------------
+def handle_echa_consent(page):
+    consent_names = [
+        "Accept only essential cookies",
+        "Accept all cookies",
+        "I Accept the terms",
+        "I accept the terms",
+        "Accept the terms",
+        "I Accept",
+    ]
+
+    print(
+        "Checking ECHA consent controls "
+        "on the main page",
+        flush=True,
+    )
+
+    for consent_name in consent_names:
+        if click_button_if_visible(
+            page,
+            consent_name,
+        ):
+            page.wait_for_timeout(
+                2000
+            )
+
+            return True
+
+    print(
+        f"Consent control not found on main page. "
+        f"Checking {len(page.frames)} frame(s).",
+        flush=True,
+    )
+
+    for frame_index, frame in enumerate(
+        page.frames
+    ):
+        try:
+            print(
+                f"Checking frame {frame_index}: "
+                f"{frame.url}",
+                flush=True,
+            )
+
+            for consent_name in consent_names:
+                if click_button_if_visible(
+                    frame,
+                    consent_name,
+                ):
+                    page.wait_for_timeout(
+                        2000
+                    )
+
+                    return True
+
+        except PlaywrightError as error:
+            print(
+                f"Could not inspect frame "
+                f"{frame_index}: {error}",
+                flush=True,
+            )
+
+    print(
+        "No clickable ECHA consent control was found.",
+        flush=True,
+    )
+
+    return False
+
+
+# --------------------------------------------------
+# CHECK WHETHER LEGAL NOTICE IS ACTIVE
+# --------------------------------------------------
+def legal_notice_is_active(page):
+    try:
+        body_text = page.locator(
+            "body"
+        ).inner_text(
+            timeout=10000
+        )
+
+        indicators = [
+            "Accept only essential cookies",
+            "Accept all cookies",
+            "The European Chemicals Agency",
+            "1. Disclaimer",
+        ]
+
+        matches = sum(
+            indicator in body_text
+            for indicator in indicators
+        )
+
+        print(
+            f"ECHA legal notice indicator matches: "
+            f"{matches}",
+            flush=True,
+        )
+
+        return matches >= 3
+
+    except PlaywrightError as error:
+        print(
+            f"Could not determine whether the ECHA "
+            f"legal notice is active: {error}",
+            flush=True,
+        )
+
+        return False
+
+
+# --------------------------------------------------
+# GENERIC ECHA NAVIGATION
+# --------------------------------------------------
+def open_echa_page(
+    page,
+    url,
+    description,
+):
+    """
+    Navigate to an ECHA page.
+
+    A 403 is intentionally not treated as immediately fatal.
+    Chromium is allowed to remain on the page for up to
+    60 seconds to determine whether an intermediate page
+    clears naturally.
     """
 
     print(
@@ -415,33 +606,37 @@ def open_echa_page(page, url, description):
         flush=True,
     )
 
-    response = page.goto(
-        url,
-        wait_until="commit",
-        timeout=45000,
-    )
+    try:
+        response = page.goto(
+            url,
+            wait_until="commit",
+            timeout=NAVIGATION_TIMEOUT_MS,
+        )
+
+    except PlaywrightTimeoutError as error:
+        print(
+            f"{description} initial navigation timed out: "
+            f"{error}",
+            flush=True,
+        )
+
+        response = None
 
     print(
-        f"{description} navigation committed. "
+        f"{description} navigation step completed. "
         f"Current URL: {page.url}",
         flush=True,
     )
 
+    status = None
+
     if response is not None:
+        status = response.status
+
         print(
-            f"{description} HTTP status: "
-            f"{response.status}",
+            f"{description} HTTP status: {status}",
             flush=True,
         )
-
-        if response.status >= 400:
-            print(
-                f"WARNING: {description} returned "
-                f"HTTP {response.status}",
-                flush=True,
-            )
-
-            return response
 
     else:
         print(
@@ -450,10 +645,59 @@ def open_echa_page(page, url, description):
             flush=True,
         )
 
+    # --------------------------------------------------
+    # SPECIAL HANDLING FOR HTTP 403
+    # --------------------------------------------------
+    if status == 403:
+        print(
+            f"WARNING: {description} returned HTTP 403.",
+            flush=True,
+        )
+
+        print(
+            "The browser will remain open temporarily "
+            "to determine whether this response changes "
+            "after an intermediate verification step.",
+            flush=True,
+        )
+
+        cleared = wait_for_verification_to_clear(
+            page,
+            description,
+        )
+
+        if not cleared:
+            raise RuntimeError(
+                f"{description} remained blocked with "
+                f"HTTP 403 after "
+                f"{VERIFICATION_MAX_WAIT_SECONDS} seconds"
+            )
+
+        return response
+
+    # --------------------------------------------------
+    # OTHER HTTP ERRORS
+    # --------------------------------------------------
+    if (
+        status is not None
+        and status >= 400
+    ):
+        print_page_diagnostics(
+            page
+        )
+
+        raise RuntimeError(
+            f"{description} returned "
+            f"HTTP status {status}"
+        )
+
+    # --------------------------------------------------
+    # NORMAL DOM LOADING
+    # --------------------------------------------------
     try:
         page.wait_for_load_state(
             "domcontentloaded",
-            timeout=15000,
+            timeout=DOM_TIMEOUT_MS,
         )
 
         print(
@@ -464,23 +708,29 @@ def open_echa_page(page, url, description):
     except PlaywrightTimeoutError:
         print(
             f"WARNING: {description} DOM content "
-            f"did not finish loading within 15 seconds. "
+            f"did not finish loading within "
+            f"{DOM_TIMEOUT_MS // 1000} seconds. "
             f"Continuing with the rendered page.",
             flush=True,
         )
 
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(
+        3000
+    )
 
     return response
 
 
 # --------------------------------------------------
-# WAIT FOR ECHA PAGE CONTENT
+# WAIT FOR ECHA SEARCH CONTENT
 # --------------------------------------------------
-def wait_for_echa_content(page, cas_number):
+def wait_for_echa_content(
+    page,
+    cas_number,
+):
     print(
-        f"Waiting for CAS {cas_number} to appear "
-        f"in the rendered ECHA page",
+        f"Waiting for CAS {cas_number} "
+        f"to appear in the rendered ECHA page",
         flush=True,
     )
 
@@ -496,11 +746,12 @@ def wait_for_echa_content(page, cas_number):
             }
             """,
             arg=cas_number,
-            timeout=30000,
+            timeout=60000,
         )
 
         print(
-            f"CAS {cas_number} is visible in the page",
+            f"CAS {cas_number} is visible "
+            f"in the page",
             flush=True,
         )
 
@@ -508,8 +759,8 @@ def wait_for_echa_content(page, cas_number):
 
     except PlaywrightTimeoutError:
         print(
-            f"CAS {cas_number} was not visible after "
-            f"30 seconds",
+            f"CAS {cas_number} was not visible "
+            f"after 60 seconds",
             flush=True,
         )
 
@@ -517,7 +768,8 @@ def wait_for_echa_content(page, cas_number):
 
     except PlaywrightError as error:
         print(
-            f"Could not wait for ECHA content: {error}",
+            f"Could not wait for ECHA content: "
+            f"{error}",
             flush=True,
         )
 
@@ -539,7 +791,8 @@ def find_result_rows(page, cas_number):
 
     except PlaywrightError as error:
         print(
-            f"Could not count ECHA result rows: {error}",
+            f"Could not count ECHA result rows: "
+            f"{error}",
             flush=True,
         )
 
@@ -550,8 +803,12 @@ def find_result_rows(page, cas_number):
         flush=True,
     )
 
-    for index in range(row_count):
-        row = all_rows.nth(index)
+    for index in range(
+        row_count
+    ):
+        row = all_rows.nth(
+            index
+        )
 
         try:
             row_text = normalise_text(
@@ -566,11 +823,14 @@ def find_result_rows(page, cas_number):
             )
 
             if cas_number in row_text:
-                matching_rows.append(row)
+                matching_rows.append(
+                    row
+                )
 
         except PlaywrightError as error:
             print(
-                f"Could not read row {index}: {error}",
+                f"Could not read row "
+                f"{index}: {error}",
                 flush=True,
             )
 
@@ -584,14 +844,16 @@ def find_result_rows(page, cas_number):
 
 
 # --------------------------------------------------
-# EXTRACT A RESULT FROM A ROW
+# EXTRACT RESULT FROM ROW
 # --------------------------------------------------
 def extract_result_from_row(
     row,
     cas_number,
     row_index,
 ):
-    cells = row.locator("td")
+    cells = row.locator(
+        "td"
+    )
 
     try:
         cell_count = cells.count()
@@ -600,14 +862,16 @@ def extract_result_from_row(
         print(
             f"Could not count cells in row "
             f"{row_index}: {error}",
-            flush=True,
+             flush=True,
         )
 
         return None
 
     cell_values = []
 
-    for cell_index in range(cell_count):
+    for cell_index in range(
+        cell_count
+    ):
         try:
             cell_text = cells.nth(
                 cell_index
@@ -616,23 +880,23 @@ def extract_result_from_row(
             )
 
             cell_values.append(
-                normalise_text(cell_text)
+                normalise_text(
+                   cell_text
+                )
             )
 
         except PlaywrightError:
-            cell_values.append("")
+            cell_values.append(
+                ""
+            )
 
     print(
-        f"ROW {row_index} CELLS: {cell_values}",
+        f"ROW {row_index} CELLS: "
+        f"{cell_values}",
         flush=True,
     )
 
     if not cell_values:
-        print(
-            f"Skipping row {row_index}: no cells",
-            flush=True,
-        )
-
         return None
 
     combined_text = " | ".join(
@@ -640,12 +904,6 @@ def extract_result_from_row(
     )
 
     if cas_number not in combined_text:
-        print(
-            f"Skipping row {row_index}: "
-            f"CAS number not found in row",
-            flush=True,
-        )
-
         return None
 
     found_cas = ""
@@ -655,14 +913,18 @@ def extract_result_from_row(
             found_cas = cas_number
             break
 
-        if looks_like_cas_number(value):
+        if looks_like_cas_number(
+            value
+        ):
             found_cas = value
             break
 
     ec_number = ""
 
     for value in cell_values:
-        if looks_like_ec_number(value):
+        if looks_like_ec_number(
+            value
+        ):
             ec_number = value
             break
 
@@ -679,27 +941,37 @@ def extract_result_from_row(
     except PlaywrightError:
         link_count = 0
 
-    for link_index in range(link_count):
+    for link_index in range(
+        link_count
+    ):
         link = links.nth(
             link_index
         )
 
         try:
-            candidate_url = link.get_attribute(
-                "href"
+            candidate_url = (
+                link.get_attribute(
+                    "href"
+                )
             )
 
-            candidate_text = normalise_text(
-                link.inner_text(
-                    timeout=3000
+            candidate_text = (
+                normalise_text(
+                    link.inner_text(
+                        timeout=3000
+                    )
                 )
             )
 
             if candidate_url:
-                relative_url = candidate_url
+                relative_url = (
+                    candidate_url
+                )
 
                 if candidate_text:
-                    link_text = candidate_text
+                    link_text = (
+                        candidate_text
+                    )
 
                 break
 
@@ -738,10 +1010,14 @@ def extract_result_from_row(
             if value == ec_number:
                 continue
 
-            if looks_like_cas_number(value):
+            if looks_like_cas_number(
+                value
+            ):
                 continue
 
-            if looks_like_ec_number(value):
+            if looks_like_ec_number(
+                value
+            ):
                 continue
 
             name = value
@@ -753,12 +1029,16 @@ def extract_result_from_row(
     result = {
         "Name": name,
         "EC Number": ec_number,
-        "CAS Number": found_cas or cas_number,
+        "CAS Number": (
+            found_cas
+            or cas_number
+        ),
         "URL": full_url,
     }
 
     print(
-        f"Extracted ECHA result: {result}",
+        f"Extracted ECHA result: "
+        f"{result}",
         flush=True,
     )
 
@@ -766,9 +1046,11 @@ def extract_result_from_row(
 
 
 # --------------------------------------------------
-# REMOVE DUPLICATE RESULTS
+# REMOVE DUPLICATES
 # --------------------------------------------------
-def remove_duplicate_results(results):
+def remove_duplicate_results(
+    results,
+):
     unique_results = []
     seen_urls = set()
 
@@ -827,12 +1109,14 @@ def search_echa(cas_number):
     context = None
 
     print(
-        f"ECHA code version: {CODE_VERSION}",
+        f"ECHA code version: "
+        f"{CODE_VERSION}",
         flush=True,
     )
 
     print(
-        f"ECHA search started for CAS {cas_number}",
+        f"ECHA search started for "
+        f"CAS {cas_number}",
         flush=True,
     )
 
@@ -847,15 +1131,17 @@ def search_echa(cas_number):
                     flush=True,
                 )
 
-                browser = playwright.chromium.launch(
-                    headless=True,
-                    chromium_sandbox=False,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-gpu",
-                    ],
+                browser = (
+                    playwright.chromium.launch(
+                        headless=True,
+                        chromium_sandbox=False,
+                        args=[
+                            "--no-sandbox",
+                            "--disable-setuid-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-gpu",
+                        ],
+                    )
                 )
 
                 print(
@@ -864,7 +1150,7 @@ def search_echa(cas_number):
                 )
 
                 # --------------------------------------------------
-                # CREATE CONTEXT
+                # CONTEXT
                 # --------------------------------------------------
                 context = browser.new_context(
                     viewport={
@@ -879,7 +1165,9 @@ def search_echa(cas_number):
                     flush=True,
                 )
 
-                page = context.new_page()
+                page = (
+                    context.new_page()
+                )
 
                 print(
                     "Chromium page created",
@@ -887,98 +1175,92 @@ def search_echa(cas_number):
                 )
 
                 page.set_default_timeout(
-                    10000
+                    DEFAULT_TIMEOUT_MS
                 )
 
                 page.set_default_navigation_timeout(
-                    45000
+                    NAVIGATION_TIMEOUT_MS
                 )
 
-                page.route(
-                    "**/*",
-                    block_unnecessary_resources,
-                )
+                # IMPORTANT FOR V15:
+                #
+                # Do NOT block images, fonts, media or
+                # scripts during this test.
+                #
+                # The intermediate verification mechanism
+                # may depend on browser resources.
+                #
+                # Therefore there is intentionally no:
+                #
+                # page.route(
+                #     "**/*",
+                #     block_unnecessary_resources,
+                # )
 
-                search_url = build_search_url(
-                    cas_number
+                search_url = (
+                    build_search_url(
+                        cas_number
+                    )
                 )
 
                 # --------------------------------------------------
-                # STEP 1: CREATE NORMAL ECHA SESSION
+                # STEP 1: OPEN HOMEPAGE
                 # --------------------------------------------------
                 print(
-                    "Creating initial ECHA browser session",
+                    "Creating initial ECHA "
+                    "browser session",
                     flush=True,
                 )
 
-                home_response = open_echa_page(
+                open_echa_page(
                     page,
                     ECHA_URL,
                     "ECHA homepage",
                 )
 
-                if home_response is not None:
-                    print(
-                        f"ECHA homepage result status: "
-                        f"{home_response.status}",
-                        flush=True,
-                    )
-
-                    if home_response.status >= 400:
-                        print(
-                            "ECHA homepage request was rejected.",
-                            flush=True,
-                        )
-
-                        print_page_diagnostics(
-                            page
-                        )
-
-                        raise RuntimeError(
-                            f"ECHA homepage returned "
-                            f"HTTP status "
-                            f"{home_response.status}"
-                        )
-
-                # --------------------------------------------------
-                # STEP 2: HANDLE CONSENT ON HOMEPAGE
-                # --------------------------------------------------
                 print(
-                    "Checking consent on ECHA homepage",
+                    "ECHA homepage is accessible "
+                    "after initial navigation/"
+                    "verification handling",
                     flush=True,
                 )
 
-                consent_clicked = handle_echa_consent(
-                    page
+                # --------------------------------------------------
+                # STEP 2: NORMAL CONSENT
+                # --------------------------------------------------
+                consent_clicked = (
+                    handle_echa_consent(
+                        page
+                    )
                 )
 
                 if consent_clicked:
                     print(
-                        "ECHA consent handled on homepage",
-                        flush=True,
-                    )
-
-                    page.wait_for_timeout(
-                        2000
-                    )
-
-                else:
-                    print(
-                        "No ECHA consent control found "
+                        "ECHA consent handled "
                         "on homepage",
                         flush=True,
                     )
 
+                    page.wait_for_timeout(
+                        3000
+                    )
+
+                else:
+                    print(
+                        "No normal ECHA consent "
+                        "control found on homepage",
+                        flush=True,
+                    )
+
                 # --------------------------------------------------
-                # CHECK LEGAL NOTICE
+                # STEP 3: LEGAL NOTICE
                 # --------------------------------------------------
                 if legal_notice_is_active(
                     page
                 ):
                     print(
-                        "ECHA legal notice still appears "
-                        "to be active after first consent "
-                        "attempt.",
+                        "ECHA legal notice is active. "
+                        "Trying consent once more.",
                         flush=True,
                     )
 
@@ -989,25 +1271,12 @@ def search_echa(cas_number):
                     )
 
                     if second_consent_clicked:
-                        print(
-                            "Second ECHA consent attempt "
-                            "succeeded",
-                            flush=True,
-                        )
-
                         page.wait_for_timeout(
-                            2000
-                        )
-
-                    else:
-                        print(
-                            "No additional consent control "
-                            "was available",
-                            flush=True,
+                            3000
                         )
 
                 # --------------------------------------------------
-                # STEP 3: OPEN SUBSTANCE SEARCH
+                # STEP 4: OPEN SUBSTANCE SEARCH
                 # --------------------------------------------------
                 print(
                     f"Opening ECHA substance search "
@@ -1015,49 +1284,21 @@ def search_echa(cas_number):
                     flush=True,
                 )
 
-                search_response = open_echa_page(
+                open_echa_page(
                     page,
                     search_url,
                     "ECHA substance search",
                 )
 
                 # --------------------------------------------------
-                # STEP 4: CHECK SEARCH RESPONSE
-                # --------------------------------------------------
-                if search_response is not None:
-                    print(
-                        f"ECHA substance search result "
-                        f"status: {search_response.status}",
-                        flush=True,
-                    )
-
-                    if search_response.status >= 400:
-                        print(
-                            f"ERROR: ECHA substance search "
-                            f"returned HTTP "
-                            f"{search_response.status}",
-                            flush=True,
-                        )
-
-                        print_page_diagnostics(
-                            page
-                        )
-
-                        raise RuntimeError(
-                            f"ECHA substance search returned "
-                            f"HTTP status "
-                            f"{search_response.status}"
-                        )
-
-                # --------------------------------------------------
-                # STEP 5: CHECK CONSENT AGAIN ON SEARCH PAGE
+                # STEP 5: CONSENT ON SEARCH PAGE
                 # --------------------------------------------------
                 if legal_notice_is_active(
                     page
                 ):
                     print(
-                        "ECHA legal notice detected on "
-                        "substance search page.",
+                        "ECHA legal notice detected "
+                        "on substance search page.",
                         flush=True,
                     )
 
@@ -1069,57 +1310,37 @@ def search_echa(cas_number):
 
                     if search_consent_clicked:
                         print(
-                            "ECHA consent handled on "
-                            "substance search page",
+                            "ECHA consent handled "
+                            "on substance search page",
                             flush=True,
                         )
 
                         page.wait_for_timeout(
-                            2000
+                            3000
                         )
 
                         print(
-                            "Reloading substance search "
+                            "Reloading ECHA search "
                             "after consent",
                             flush=True,
                         )
 
-                        search_response = open_echa_page(
+                        open_echa_page(
                             page,
                             search_url,
-                            "ECHA substance search after consent",
+                            "ECHA substance search "
+                            "after consent",
                         )
 
-                        if search_response is not None:
-                            if search_response.status >= 400:
-                                print(
-                                    f"ERROR: Reloaded ECHA "
-                                    f"search returned HTTP "
-                                    f"{search_response.status}",
-                                    flush=True,
-                                )
-
-                                print_page_diagnostics(
-                                    page
-                                )
-
-                                raise RuntimeError(
-                                    "ECHA substance search "
-                                    "after consent returned "
-                                    f"HTTP status "
-                                    f"{search_response.status}"
-                                )
-
                 # --------------------------------------------------
-                # STEP 6: FINAL LEGAL NOTICE CHECK
+                # STEP 6: FINAL BLOCK CHECK
                 # --------------------------------------------------
-                if legal_notice_is_active(
+                if page_looks_blocked(
                     page
                 ):
                     print(
-                        "ERROR: ECHA is still displaying "
-                        "its legal notice after all "
-                        "consent attempts.",
+                        "ERROR: ECHA search page "
+                        "is still blocked.",
                         flush=True,
                     )
 
@@ -1127,18 +1348,24 @@ def search_echa(cas_number):
                         page
                     )
 
-                    return []
+                    raise RuntimeError(
+                        "ECHA search remained blocked"
+                    )
 
                 # --------------------------------------------------
-                # STEP 7: WAIT FOR SEARCH CONTENT
+                # STEP 7: WAIT FOR CAS
                 # --------------------------------------------------
-                cas_visible = wait_for_echa_content(
-                    page,
-                    cas_number,
+                cas_visible = (
+                    wait_for_echa_content(
+                        page,
+                        cas_number,
+                    )
                 )
 
-                body_text = read_body_text(
-                    page
+                body_text = (
+                    read_body_text(
+                        page
+                    )
                 )
 
                 print_page_diagnostics(
@@ -1148,40 +1375,45 @@ def search_echa(cas_number):
 
                 if not cas_visible:
                     print(
-                        f"CAS {cas_number} did not appear "
-                        f"in the rendered page within "
-                        f"the timeout",
+                        f"CAS {cas_number} did not "
+                        f"appear in the rendered page "
+                        f"within the timeout",
                         flush=True,
                     )
 
                 # --------------------------------------------------
-                # STEP 8: FIND RESULT ROWS
+                # STEP 8: FIND RESULTS
                 # --------------------------------------------------
-                matching_rows = find_result_rows(
-                    page,
-                    cas_number,
+                matching_rows = (
+                    find_result_rows(
+                        page,
+                        cas_number,
+                    )
                 )
 
                 if not matching_rows:
                     print(
-                        f"No ECHA substance result rows "
-                        f"found for {cas_number}",
+                        f"No ECHA substance result "
+                        f"rows found for "
+                        f"{cas_number}",
                         flush=True,
                     )
 
                     return []
 
                 # --------------------------------------------------
-                # STEP 9: EXTRACT RESULT DATA
+                # STEP 9: EXTRACT RESULTS
                 # --------------------------------------------------
                 for index, row in enumerate(
                     matching_rows
                 ):
                     try:
-                        result = extract_result_from_row(
-                            row=row,
-                            cas_number=cas_number,
-                            row_index=index,
+                        result = (
+                            extract_result_from_row(
+                                row=row,
+                                cas_number=cas_number,
+                                row_index=index,
+                            )
                         )
 
                         if result is not None:
@@ -1191,15 +1423,16 @@ def search_echa(cas_number):
 
                     except PlaywrightError as error:
                         print(
-                            f"Could not process matching row "
-                            f"{index}: {error}",
+                            f"Could not process "
+                            f"matching row {index}: "
+                            f"{error}",
                             flush=True,
                         )
 
                     except Exception as error:
                         print(
-                            f"Unexpected row error at "
-                            f"{index}: {error}",
+                            f"Unexpected row error "
+                            f"at {index}: {error}",
                             flush=True,
                         )
 
@@ -1213,7 +1446,8 @@ def search_echa(cas_number):
                 )
 
                 print(
-                    "ECHA SEARCH COMPLETED SUCCESSFULLY",
+                    "ECHA SEARCH COMPLETED "
+                    "SUCCESSFULLY",
                     flush=True,
                 )
 
@@ -1227,12 +1461,14 @@ def search_echa(cas_number):
 
             except PlaywrightTimeoutError as error:
                 raise RuntimeError(
-                    f"ECHA search timed out: {error}"
+                    f"ECHA search timed out: "
+                    f"{error}"
                 ) from error
 
             except PlaywrightError as error:
                 raise RuntimeError(
-                    f"ECHA search failed: {error}"
+                    f"ECHA search failed: "
+                    f"{error}"
                 ) from error
 
             except RuntimeError:
@@ -1240,12 +1476,13 @@ def search_echa(cas_number):
 
             except Exception as error:
                 raise RuntimeError(
-                    f"Unexpected ECHA error: {error}"
+                    f"Unexpected ECHA error: "
+                    f"{error}"
                 ) from error
 
             finally:
                 # --------------------------------------------------
-                # CLEAN UP
+                # CLEANUP
                 # --------------------------------------------------
                 if context is not None:
                     try:
@@ -1258,8 +1495,9 @@ def search_echa(cas_number):
 
                     except PlaywrightError as error:
                         print(
-                            f"Could not close Chromium "
-                            f"context: {error}",
+                            f"Could not close "
+                            f"Chromium context: "
+                            f"{error}",
                             flush=True,
                         )
 
@@ -1274,8 +1512,9 @@ def search_echa(cas_number):
 
                     except PlaywrightError as error:
                         print(
-                            f"Could not close Chromium "
-                            f"browser: {error}",
+                            f"Could not close "
+                            f"Chromium browser: "
+                            f"{error}",
                             flush=True,
                         )
 
@@ -1284,6 +1523,6 @@ def search_echa(cas_number):
 
     except Exception as error:
         raise RuntimeError(
-            f"The Playwright service could not be started: "
-            f"{error}"
+            "The Playwright service could not "
+            f"be started: {error}"
         ) from error
