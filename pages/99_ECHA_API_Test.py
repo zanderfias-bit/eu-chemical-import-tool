@@ -391,7 +391,9 @@ def get_reach_dossiers(
     params = {
         "pageIndex": 1,
         "pageSize": 100,
-        "rmlId": rml_id,
+        "rmlID" : "100.004.49",
+        "legislation" : "...",
+        # eventueel registrationStatus
     }
 
     if registration_status:
