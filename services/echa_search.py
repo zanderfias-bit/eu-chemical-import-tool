@@ -758,29 +758,7 @@ def search_echa(cas_number):
                     )
 
                     print_page_diagnostics(page)
-
                     return []
-
-                    # Check for a second consent notice.
-                    second_consent_clicked = (
-                        handle_echa_consent(page)
-                    )
-
-                    if second_consent_clicked:
-                        print(
-                            "Reloading ECHA after second consent",
-                            flush=True,
-                        )
-
-                        page.goto(
-                            search_url,
-                            wait_until="domcontentloaded",
-                            timeout=60000,
-                        )
-
-                        page.wait_for_timeout(
-                            2000
-                        )
 
                 # Wait until the CAS number appears somewhere
                 # in the rendered page.
