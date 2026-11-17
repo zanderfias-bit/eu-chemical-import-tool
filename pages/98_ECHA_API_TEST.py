@@ -1,6 +1,5 @@
 import re
 from collections import deque
-from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 import pandas as pd
@@ -14,7 +13,7 @@ from urllib3.util.retry import Retry
 # PAGE CONFIGURATION
 # --------------------------------------------------
 st.set_page_config(
-    page_title="ECHA Registrants API Discovery",
+    page_title="ECHA Dossier List Discovery",
     page_icon="🔎",
     layout="wide",
 )
@@ -23,7 +22,7 @@ st.set_page_config(
 # --------------------------------------------------
 # VERSION
 # --------------------------------------------------
-CODE_VERSION = "ECHA_REGISTRANTS_API_DISCOVERY_V8_FIX2"
+CODE_VERSION = "ECHA_DOSSIER_LIST_DISCOVERY_V9"
 
 
 # --------------------------------------------------
@@ -34,6 +33,16 @@ EC_NUMBER = "204-881-4"
 RML_ID = "100.004.439"
 
 ECHA_BASE_URL = "https://chem.echa.europa.eu"
+
+DOSSIER_LIST_REMOTE_ENTRY = (
+    f"{ECHA_BASE_URL}/"
+    "dossierList/remoteEntry.json"
+)
+
+RUNTIME_CONFIG_URL = (
+    f"{ECHA_BASE_URL}/"
+    "mfe-config/mfe-config.json"
+)
 
 OVERVIEW_URL = (
     f"{ECHA_BASE_URL}/"
@@ -46,19 +55,20 @@ OVERVIEW_URL = (
 # --------------------------------------------------
 CONNECT_TIMEOUT_SECONDS = 20
 READ_TIMEOUT_SECONDS = 90
+
 MAX_FILES = 100
 
 HEADERS = {
     "Accept": (
-        "text/html,"
-        "application/xhtml+xml,"
+        "application/json,"
         "application/javascript,"
         "text/javascript,"
-        "application/json,"
         "text/plain,"
         "*/*"
     ),
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Language": (
+        "en-US,en;q=0.9"
+    ),
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) "
         "AppleWebKit/537.36 "
@@ -69,107 +79,27 @@ HEADERS = {
 
 
 # --------------------------------------------------
-# CRITICAL SEARCH TERMS
+# SEARCH TERMS
 # --------------------------------------------------
 SEARCH_TERMS = [
-    "dossierListApiUrl",
-    "dossierApiUrl",
-    "api-dossier-list/v1/",
-    "api-dossier-list",
-    "asset-owner",
-    "assetowner",
     "registrants",
     "registrant",
-    'listType:"registrants"',
+    "asset-owner",
+    "assetowner",
     "listType",
-    "runtimeConfig",
-    "runtime-config",
-    "remoteEntry.json",
-    "remoteEntry",
-    "iucdas-mod-dossier-list-app",
-    "app-reach-registrants-list",
+    "dossierListApiUrl",
+    "dossierApiUrl",
+    "api-dossier-list",
+    "pageIndex",
+    "pageSize",
+    "rmlId",
+    "address",
+    "registrationStatus",
 ]
 
 
 # --------------------------------------------------
-# HTML PARSER
-# --------------------------------------------------
-class ECHAHTMLParser(HTMLParser):
-    def __init__(self):
-        super().__init__(
-            convert_charrefs=True
-        )
-
-        self.base_href = "/"
-        self.script_sources = []
-        self.link_sources = []
-
-    def handle_starttag(
-        self,
-        tag,
-        attrs,
-    ):
-        attributes = dict(
-            attrs
-        )
-
-        tag = str(
-            tag
-        ).lower()
-
-        if tag == "base":
-            href = attributes.get(
-                "href"
-            )
-
-            if href:
-                self.base_href = str(
-                    href
-                ).strip()
-
-        elif tag == "script":
-            src = attributes.get(
-                "src"
-            )
-
-            if src:
-                self.script_sources.append(
-                    str(src).strip()
-                )
-
-        elif tag == "link":
-            href = attributes.get(
-                "href"
-            )
-
-            rel = str(
-                attributes.get(
-                    "rel",
-                    "",
-                )
-            ).lower()
-
-            if not href:
-                return
-
-            clean_href = str(
-                href
-            ).strip()
-
-            if (
-                "modulepreload" in rel
-                or clean_href
-                .lower()
-                .split("?")[0]
-                .endswith(".js")
-            ):
-                self.link_sources.append(
-                    clean_href
-                )
-
-
-# --------------------------------------------------
-# SESSION
+# HTTP SESSION
 # --------------------------------------------------
 def create_session():
     session = requests.Session()
@@ -198,25 +128,27 @@ def create_session():
         raise_on_status=False,
     )
 
+    adapter = HTTPAdapter(
+        max_retries=retry
+    )
+
     session.mount(
         "https://",
-        HTTPAdapter(
-            max_retries=retry
-        ),
+        adapter,
     )
 
     return session
 
 
 # --------------------------------------------------
-# SAFE REQUEST
+# SAFE GET
 # --------------------------------------------------
 def safe_get(
     session,
     url,
     referer=None,
 ):
-    request_headers = (
+    headers = (
         {
             "Referer": referer
         }
@@ -227,7 +159,7 @@ def safe_get(
     try:
         response = session.get(
             url,
-            headers=request_headers,
+            headers=headers,
             timeout=(
                 CONNECT_TIMEOUT_SECONDS,
                 READ_TIMEOUT_SECONDS,
@@ -251,7 +183,61 @@ def safe_get(
 
 
 # --------------------------------------------------
-# URL VALIDATION
+# CLEAN DISCOVERED URL
+# --------------------------------------------------
+def clean_discovered_url(
+    value,
+    base_url,
+):
+    if value is None:
+        return ""
+
+    cleaned = (
+        str(value)
+        .strip()
+        .strip("\"'")
+        .replace(
+            "\\/",
+            "/",
+        )
+        .replace(
+            "\\u002F",
+            "/",
+        )
+        .replace(
+            "\\u002f",
+            "/",
+        )
+    )
+
+    # Remove accidentally encoded quote marks.
+    while (
+        cleaned.lower().endswith(
+            "%22"
+        )
+        or
+        cleaned.lower().endswith(
+            "%27"
+        )
+    ):
+        cleaned = (
+            cleaned[:-3]
+        )
+
+    cleaned = (
+        cleaned.rstrip(
+            "\"'"
+        )
+    )
+
+    return urljoin(
+        base_url,
+        cleaned,
+    )
+
+
+# --------------------------------------------------
+# ALLOWED URL CHECK
 # --------------------------------------------------
 def is_allowed_url(
     url,
@@ -264,21 +250,20 @@ def is_allowed_url(
     except Exception:
         return False
 
-    if parsed.scheme not in {
-        "http",
-        "https",
-    }:
-        return False
-
-    hostname = (
-        parsed.hostname
-        or ""
-    ).lower()
-
-    return hostname in {
-        "chem.echa.europa.eu",
-        "webtools.europa.eu",
-    }
+    return (
+        parsed.scheme
+        in {
+            "http",
+            "https",
+        }
+        and
+        (
+            parsed.hostname
+            or ""
+        ).lower()
+        ==
+        "chem.echa.europa.eu"
+    )
 
 
 # --------------------------------------------------
@@ -300,9 +285,9 @@ def looks_like_javascript(
     )
 
     start = (
-        response.text[:1000]
-        .lower()
-    )
+        response.text
+        or ""
+    )[:1000].lower()
 
     if (
         "<!doctype html"
@@ -333,215 +318,176 @@ def looks_like_javascript(
 
 
 # --------------------------------------------------
-# LOAD APPLICATION SHELL
+# EXTRACT JS REFERENCES FROM JSON
 # --------------------------------------------------
-def load_application_shell(
-    session,
+def extract_json_file_references(
+    value,
+    base_url,
+    path="root",
+    results=None,
 ):
-    response, error = safe_get(
-        session,
-        OVERVIEW_URL,
-    )
+    if results is None:
+        results = []
 
-    if response is None:
-        return {
-            "status": None,
-            "bytes": 0,
-            "base_url": "",
-            "scripts": [],
-            "error": error,
-        }
+    if isinstance(
+        value,
+        dict,
+    ):
+        for key, nested in (
+            value.items()
+        ):
+            extract_json_file_references(
+                value=nested,
+                base_url=base_url,
+                path=(
+                    f"{path}.{key}"
+                ),
+                results=results,
+            )
 
-    parser = ECHAHTMLParser()
+    elif isinstance(
+        value,
+        list,
+    ):
+        for index, nested in enumerate(
+            value
+        ):
+            extract_json_file_references(
+                value=nested,
+                base_url=base_url,
+                path=(
+                    f"{path}[{index}]"
+                ),
+                results=results,
+            )
 
-    try:
-        parser.feed(
-            response.text
+    elif isinstance(
+        value,
+        str,
+    ):
+        lower_value = (
+            value.lower()
         )
 
-    except Exception as error:
-        return {
-            "status": (
-                response.status_code
-            ),
-            "bytes": len(
-                response.content
-            ),
-            "base_url": "",
-            "scripts": [],
-            "error": str(
-                error
-            ),
-        }
+        if (
+            lower_value.endswith(
+                ".js"
+            )
+            or
+            ".js?"
+            in lower_value
+        ):
+            url = clean_discovered_url(
+                value=value,
+                base_url=base_url,
+            )
 
-    base_url = urljoin(
-        response.url,
-        parser.base_href,
-    )
+            if is_allowed_url(
+                url
+            ):
+                results.append(
+                    {
+                        "path": (
+                            path
+                        ),
+                        "value": (
+                            value
+                        ),
+                        "url": (
+                            url
+                        ),
+                    }
+                )
 
-    sources = (
-        parser.script_sources
-        +
-        parser.link_sources
-    )
+    return results
 
-    scripts = []
+
+# --------------------------------------------------
+# EXTRACT JS REFERENCES FROM TEXT
+# --------------------------------------------------
+def extract_script_references(
+    text,
+    source_url,
+):
+    if not text:
+        return []
+
+    candidates = []
+
+    patterns = [
+        (
+            r'''["']'''
+            r'''([^"']+\.js'''
+            r'''(?:\?[^"']*)?)'''
+            r'''["']'''
+        ),
+        (
+            r'''import\s*\(\s*'''
+            r'''["']'''
+            r'''([^"']+)'''
+            r'''["']'''
+            r'''\s*\)'''
+        ),
+        (
+            r'''(?:chunk|main|runtime|polyfills)-'''
+            r'''[A-Za-z0-9_-]+\.js'''
+        ),
+    ]
+
+    for pattern in patterns:
+        matches = re.findall(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        candidates.extend(
+            matches
+        )
+
+    urls = []
     seen = set()
 
-    for source in sources:
-        script_url = urljoin(
-            base_url,
-            source,
+    for candidate in candidates:
+        url = clean_discovered_url(
+            value=candidate,
+            base_url=source_url,
         )
+
+        if not is_allowed_url(
+            url
+        ):
+            continue
 
         path = (
             urlparse(
-                script_url
+                url
             )
             .path
             .lower()
         )
-
-        if script_url in seen:
-            continue
-
-        if not is_allowed_url(
-            script_url
-        ):
-            continue
 
         if not path.endswith(
             ".js"
         ):
             continue
 
-        seen.add(
-            script_url
-        )
-
-        scripts.append(
-            script_url
-        )
-
-    return {
-        "status": (
-            response.status_code
-        ),
-        "bytes": len(
-            response.content
-        ),
-        "base_url": (
-            base_url
-        ),
-        "scripts": (
-            scripts
-        ),
-        "error": None,
-    }
-
-
-# --------------------------------------------------
-# EXTRACT CHILD JAVASCRIPT FILES
-# --------------------------------------------------
-def extract_child_scripts(
-    script_text,
-    script_url,
-):
-    if not script_text:
-        return []
-
-    candidates = []
-
-    candidates.extend(
-        re.findall(
-            r'''["']([^"']+\.js(?:\?[^"']*)?)["']''',
-            script_text,
-            flags=re.IGNORECASE,
-        )
-    )
-
-    candidates.extend(
-        re.findall(
-            r'''import\s*\(\s*["']([^"']+)["']\s*\)''',
-            script_text,
-            flags=re.IGNORECASE,
-        )
-    )
-
-    candidates.extend(
-        re.findall(
-            (
-                r"(?:chunk|main|runtime|polyfills)-"
-                r"[A-Za-z0-9_-]+\.js"
-            ),
-            script_text,
-            flags=re.IGNORECASE,
-        )
-    )
-    results = []
-    seen = set()
-
-    for candidate in candidates:
-        clean_candidate = (
-            str(candidate)
-            .strip()
-            .strip("\"'")
-            .replace(
-                "\\/",
-                "/",
-            )
-            .replace(
-                "\\u002F",
-                "/",
-            )
-            .replace(
-                "\\u002f",
-                "/",
-            )
-        )
-
-        if not clean_candidate:
-            continue
-
-        child_url = urljoin(
-            script_url,
-            clean_candidate,
-        )
-
-        child_path = (
-            urlparse(
-                child_url
-            )
-            .path
-            .lower()
-        )
-
-        if child_url in seen:
-            continue
-
-        if not is_allowed_url(
-            child_url
-        ):
-            continue
-
-        if not child_path.endswith(
-            ".js"
-        ):
+        if url in seen:
             continue
 
         seen.add(
-            child_url
+            url
         )
 
-        results.append(
-            child_url
+        urls.append(
+            url
         )
 
-    return results
+    return urls
 
 
 # --------------------------------------------------
-# FIND CONTEXTS
+# FIND RELEVANT CODE CONTEXT
 # --------------------------------------------------
 def find_contexts(
     text,
@@ -554,20 +500,22 @@ def find_contexts(
         text.lower()
     )
 
-    results = []
+    contexts = []
     seen = set()
 
     for term in SEARCH_TERMS:
+        start = 0
+
         term_lower = (
             term.lower()
         )
 
-        start = 0
-
         while True:
-            position = lower_text.find(
-                term_lower,
-                start,
+            position = (
+                lower_text.find(
+                    term_lower,
+                    start,
+                )
             )
 
             if position < 0:
@@ -575,7 +523,7 @@ def find_contexts(
 
             context_start = max(
                 0,
-                position - 900,
+                position - 800,
             )
 
             context_end = min(
@@ -583,7 +531,7 @@ def find_contexts(
                 (
                     position
                     + len(term)
-                    + 2200
+                    + 1800
                 ),
             )
 
@@ -616,7 +564,7 @@ def find_contexts(
 
             key = (
                 term_lower,
-                context[:700],
+                context[:600],
             )
 
             if key not in seen:
@@ -624,7 +572,7 @@ def find_contexts(
                     key
                 )
 
-                results.append(
+                contexts.append(
                     {
                         "source": (
                             source
@@ -643,104 +591,154 @@ def find_contexts(
                 + len(term)
             )
 
-            if len(
-                results
-            ) >= 250:
-                return results
+            if (
+                len(contexts)
+                >= 250
+            ):
+                return contexts
 
-    return results
+    return contexts
 
 
 # --------------------------------------------------
-# EXTRACT CONFIG URL REFERENCES
+# EXTRACT POSSIBLE ENDPOINT FRAGMENTS
 # --------------------------------------------------
-def extract_config_urls(
+def extract_endpoint_fragments(
     text,
-    source_url,
+    source,
 ):
-    if not text:
-        return []
+    fragments = []
+    seen = set()
 
     patterns = [
         (
-            r'''[^"']*remoteEntry\.json'''
-            r'''[^"']*["']'''
+            r'''["']'''
+            r'''([^"']*'''
+            r'''(?:asset-owner|assetowner|'''
+            r'''registrants|registrant)'''
+            r'''[^"']*)'''
+            r'''["']'''
         ),
         (
-            r'''[^"']*config[^"']*\.json'''
-            r'''[^"']*["']'''
+            r'''["']'''
+            r'''([^"']*'''
+            r'''api-dossier-list'''
+            r'''[^"']*)'''
+            r'''["']'''
         ),
         (
-            r'''[^"']*runtime[^"']*\.json'''
-            r'''[^"']*["']'''
-        ),
-        (
-            r'''[^"']*environment[^"']*\.json'''
-            r'''[^"']*["']'''
-        ),
-        (
-            r'''[^"']*settings[^"']*\.json'''
-            r'''[^"']*["']'''
+            r'''["']'''
+            r'''([^"']*'''
+            r'''(?:pageIndex|pageSize|rmlId)'''
+            r'''[^"']*)'''
+            r'''["']'''
         ),
     ]
 
-    candidates = []
-
     for pattern in patterns:
-        candidates.extend(
-            re.findall(
-                pattern,
-                text,
-                flags=re.IGNORECASE,
+        matches = re.findall(
+            pattern,
+            text or "",
+            flags=re.IGNORECASE,
+        )
+
+        for match in matches:
+            value = re.sub(
+                r"\s+",
+                " ",
+                str(match),
+            ).strip()
+
+            if not value:
+                continue
+
+            if len(
+                value
+            ) > 1000:
+                continue
+
+            if value in seen:
+                continue
+
+            seen.add(
+                value
             )
-        )
 
-    results = []
-    seen = set()
-
-    for candidate in candidates:
-        clean_candidate = (
-            str(candidate)
-            .strip()
-            .replace(
-                "\\/",
-                "/",
+            fragments.append(
+                {
+                    "source": (
+                        source
+                    ),
+                    "fragment": (
+                        value
+                    ),
+                }
             )
-            .replace(
-                "\\u002F",
-                "/",
+
+    return fragments
+
+
+# --------------------------------------------------
+# FETCH JSON RESOURCE
+# --------------------------------------------------
+def fetch_json_resource(
+    session,
+    url,
+):
+    response, error = safe_get(
+        session=session,
+        url=url,
+        referer=OVERVIEW_URL,
+    )
+
+    if response is None:
+        return {
+            "url": (
+                url
+            ),
+            "status": None,
+            "content_type": "",
+            "bytes": 0,
+            "json": None,
+            "text": "",
+            "error": (
+                error
+            ),
+        }
+
+    try:
+        body = (
+            response.json()
+        )
+
+    except ValueError:
+        body = None
+
+    return {
+        "url": (
+            response.url
+        ),
+        "status": (
+            response.status_code
+        ),
+        "content_type": (
+            response.headers.get(
+                "content-type",
+                "",
             )
-            .replace(
-                "\\u002f",
-                "/",
-            )
-        )
-
-        if not clean_candidate:
-            continue
-
-        url = urljoin(
-            source_url,
-            clean_candidate,
-        )
-
-        if url in seen:
-            continue
-
-        if not is_allowed_url(
-            url
-        ):
-            continue
-
-        seen.add(
-            url
-        )
-
-        results.append(
-            url
-        )
-
-    return results
+        ),
+        "bytes": len(
+            response.content
+        ),
+        "json": (
+            body
+        ),
+        "text": (
+            response.text
+            or ""
+        ),
+        "error": None,
+    }
 
 
 # --------------------------------------------------
@@ -748,75 +746,69 @@ def extract_config_urls(
 # --------------------------------------------------
 def analyse_javascript_tree(
     session,
-    initial_scripts,
+    initial_urls,
 ):
     pending = deque(
-        {
-            "url": script_url,
-            "depth": 0,
-            "parent": OVERVIEW_URL,
-        }
-        for script_url
-        in initial_scripts
+        (
+            url,
+            DOSSIER_LIST_REMOTE_ENTRY,
+            0,
+        )
+        for url
+        in initial_urls
     )
 
     visited = set()
 
-    file_results = []
-    context_results = []
-
-    config_urls = []
-    seen_config_urls = set()
+    rows = []
+    contexts = []
+    fragments = []
 
     while (
         pending
         and
         len(visited) < MAX_FILES
     ):
-        pending_item = (
-            pending.popleft()
-        )
+        (
+            url,
+            parent,
+            depth,
+        ) = pending.popleft()
 
-        script_url = (
-            pending_item[
-                "url"
-            ]
-        )
-
-        if script_url in visited:
+        if url in visited:
             continue
 
         visited.add(
-            script_url
+            url
         )
 
         response, error = safe_get(
             session=session,
-            url=script_url,
+            url=url,
             referer=(
-                pending_item[
-                    "parent"
-                ]
+                parent
+                if parent.startswith(
+                    "http"
+                )
+                else OVERVIEW_URL
             ),
         )
 
         if response is None:
-            file_results.append(
+            rows.append(
                 {
                     "Depth": (
-                        pending_item[
-                            "depth"
-                        ]
+                        depth
                     ),
-                    "Script": (
-                        script_url
+                    "URL": (
+                        url
                     ),
                     "HTTP": None,
+                    "Content-Type": "",
                     "Bytes": 0,
                     "JavaScript": False,
-                    "Child scripts": 0,
-                    "Relevant contexts": 0,
-                    "Config URLs": 0,
+                    "Children": 0,
+                    "Contexts": 0,
                     "Error": (
                         error
                     ),
@@ -831,29 +823,13 @@ def analyse_javascript_tree(
             )
         )
 
-        child_scripts = []
-        contexts = []
-        discovered_configs = []
+        children = []
+        file_contexts = []
+        file_fragments = []
 
         if javascript:
-            child_scripts = (
-                extract_child_scripts(
-                    response.text,
-                    response.url,
-                )
-            )
-
-            contexts = find_contexts(
-                text=(
-                    response.text
-                ),
-                source=(
-                    response.url
-                ),
-            )
-
-            discovered_configs = (
-                extract_config_urls(
+            children = (
+                extract_script_references(
                     text=(
                         response.text
                     ),
@@ -863,18 +839,44 @@ def analyse_javascript_tree(
                 )
             )
 
-        file_results.append(
+            file_contexts = (
+                find_contexts(
+                    text=(
+                        response.text
+                    ),
+                    source=(
+                        response.url
+                    ),
+                )
+            )
+
+            file_fragments = (
+                extract_endpoint_fragments(
+                    text=(
+                        response.text
+                    ),
+                    source=(
+                        response.url
+                    ),
+                )
+            )
+
+        rows.append(
             {
                 "Depth": (
-                    pending_item[
-                        "depth"
-                    ]
+                    depth
                 ),
-                "Script": (
+                "URL": (
                     response.url
                 ),
                 "HTTP": (
                     response.status_code
+                ),
+                "Content-Type": (
+                    response.headers.get(
+                        "content-type",
+                        "",
+                    )
                 ),
                 "Bytes": len(
                     response.content
@@ -882,456 +884,251 @@ def analyse_javascript_tree(
                 "JavaScript": (
                     javascript
                 ),
-                "Child scripts": len(
-                    child_scripts
+                "Children": len(
+                    children
                 ),
-                "Relevant contexts": len(
-                    contexts
-                ),
-                "Config URLs": len(
-                    discovered_configs
+                "Contexts": len(
+                    file_contexts
                 ),
                 "Error": None,
             }
         )
 
-        context_results.extend(
-            contexts
+        contexts.extend(
+            file_contexts
         )
 
-        for config_url in (
-            discovered_configs
-        ):
-            if (
-                config_url
-                in seen_config_urls
-            ):
-                continue
+        fragments.extend(
+            file_fragments
+        )
 
-            seen_config_urls.add(
-                config_url
-            )
-
-            config_urls.append(
-                {
-                    "source": (
-                        response.url
-                    ),
-                    "url": (
-                        config_url
-                    ),
-                }
-            )
-
-        for child_url in (
-            child_scripts
-        ):
-            if child_url in visited:
+        for child in children:
+            if child in visited:
                 continue
 
             pending.append(
-                {
-                    "url": (
-                        child_url
-                    ),
-                    "depth": (
-                        pending_item[
-                            "depth"
-                        ]
-                        + 1
-                    ),
-                    "parent": (
-                        response.url
-                    ),
-                }
+                (
+                    child,
+                    response.url,
+                    depth + 1,
+                )
             )
 
     return {
         "files": (
-            file_results
-        ),
-        "contexts": (
-            context_results
-        ),
-        "config_urls": (
-            config_urls
-        ),
-    }
-
-
-# --------------------------------------------------
-# FETCH DISCOVERED CONFIG
-# --------------------------------------------------
-def fetch_config_url(
-    session,
-    url,
-):
-    response, error = safe_get(
-        session=session,
-        url=url,
-        referer=OVERVIEW_URL,
-    )
-
-    if response is None:
-        return {
-            "url": url,
-            "status": None,
-            "content_type": "",
-            "bytes": 0,
-            "json": None,
-            "text": "",
-            "contexts": [],
-            "error": error,
-        }
-
-    content_type = (
-        response.headers
-        .get(
-            "content-type",
-            "",
-        )
-    )
-
-    text = (
-        response.text
-        or ""
-    )
-
-    try:
-        json_body = (
-            response.json()
-        )
-
-    except ValueError:
-        json_body = None
-
-    contexts = find_contexts(
-        text=text,
-        source=response.url,
-    )
-
-    return {
-        "url": (
-            response.url
-        ),
-        "status": (
-            response.status_code
-        ),
-        "content_type": (
-            content_type
-        ),
-        "bytes": len(
-            response.content
-        ),
-        "json": (
-            json_body
-        ),
-        "text": (
-            text[:20000]
+            rows
         ),
         "contexts": (
             contexts
         ),
-        "error": None,
+        "fragments": (
+            fragments
+        ),
     }
-
-
-# --------------------------------------------------
-# FIND VALUES RECURSIVELY IN JSON
-# --------------------------------------------------
-def find_json_key_values(
-    value,
-    wanted_keys,
-    path="root",
-    results=None,
-):
-    if results is None:
-        results = []
-
-    wanted_lower = {
-        key.lower()
-        for key
-        in wanted_keys
-    }
-
-    if isinstance(
-        value,
-        dict,
-    ):
-        for key, nested_value in (
-            value.items()
-        ):
-            nested_path = (
-                f"{path}.{key}"
-            )
-
-            if (
-                str(key).lower()
-                in wanted_lower
-            ):
-                results.append(
-                    {
-                        "path": (
-                            nested_path
-                        ),
-                        "key": (
-                            str(key)
-                        ),
-                        "value": (
-                            nested_value
-                        ),
-                    }
-                )
-
-            find_json_key_values(
-                value=nested_value,
-                wanted_keys=(
-                    wanted_keys
-                ),
-                path=(
-                    nested_path
-                ),
-                results=(
-                    results
-                ),
-            )
-
-    elif isinstance(
-        value,
-        list,
-    ):
-        for index, item in enumerate(
-            value
-        ):
-            find_json_key_values(
-                value=item,
-                wanted_keys=(
-                    wanted_keys
-                ),
-                path=(
-                    f"{path}[{index}]"
-                ),
-                results=(
-                    results
-                ),
-            )
-
-    return results
-
-
-# --------------------------------------------------
-# API BASE CANDIDATES
-# --------------------------------------------------
-def extract_api_base_candidates(
-    contexts,
-):
-    patterns = [
-        (
-            r"https?://"
-            r"[A-Za-z0-9._:-]+/"
-            r"[A-Za-z0-9_./-]*"
-            r"api-dossier-list"
-            r"[A-Za-z0-9_./-]*"
-        ),
-        (
-            r"/api-dossier-list/v1/"
-        ),
-        (
-            r"api-dossier-list/v1/"
-        ),
-    ]
-
-    candidates = []
-    seen = set()
-
-    for row in contexts:
-        context = row.get(
-            "context",
-            "",
-        )
-
-        for pattern in patterns:
-            matches = re.findall(
-                pattern,
-                context,
-                flags=re.IGNORECASE,
-            )
-
-            for match in matches:
-                value = str(
-                    match
-                ).strip()
-
-                key = (
-                    row.get(
-                        "source",
-                        "",
-                    ),
-                    value,
-                )
-
-                if key in seen:
-                    continue
-
-                seen.add(
-                    key
-                )
-
-                candidates.append(
-                    {
-                        "source": (
-                            row.get(
-                                "source",
-                                "",
-                            )
-                        ),
-                        "term": (
-                            row.get(
-                                "term",
-                                "",
-                            )
-                        ),
-                        "candidate": (
-                            value
-                        ),
-                    }
-                )
-
-    return candidates
 
 
 # --------------------------------------------------
 # COMPLETE DISCOVERY
 # --------------------------------------------------
 def run_discovery():
-    session = create_session()
-
-    shell = load_application_shell(
-        session
+    session = (
+        create_session()
     )
 
-    javascript_analysis = (
-        analyse_javascript_tree(
+    # ----------------------------------
+    # 1. DOSSIER LIST REMOTE ENTRY
+    # ----------------------------------
+    remote_entry = (
+        fetch_json_resource(
             session=session,
-            initial_scripts=(
-                shell.get(
-                    "scripts"
-                )
-                or []
+            url=(
+                DOSSIER_LIST_REMOTE_ENTRY
             ),
         )
     )
 
-    config_results = []
+    # ----------------------------------
+    # 2. RUNTIME CONFIG
+    # ----------------------------------
+    runtime_config = (
+        fetch_json_resource(
+            session=session,
+            url=(
+                RUNTIME_CONFIG_URL
+            ),
+        )
+    )
 
-    for config_row in (
-        javascript_analysis[
-            "config_urls"
+    initial_scripts = []
+    manifest_references = []
+
+    # ----------------------------------
+    # EXTRACT JS FROM MANIFEST JSON
+    # ----------------------------------
+    if (
+        remote_entry[
+            "json"
         ]
+        is not None
     ):
-        config_result = (
-            fetch_config_url(
-                session=session,
-                url=(
-                    config_row[
+        manifest_references = (
+            extract_json_file_references(
+                value=(
+                    remote_entry[
+                        "json"
+                    ]
+                ),
+                base_url=(
+                    DOSSIER_LIST_REMOTE_ENTRY
+                ),
+            )
+        )
+
+        initial_scripts.extend(
+            item[
+                "url"
+            ]
+            for item
+            in manifest_references
+        )
+
+    # ----------------------------------
+    # ALSO CHECK RAW MANIFEST TEXT
+    # ----------------------------------
+    initial_scripts.extend(
+        extract_script_references(
+            text=(
+                remote_entry[
+                    "text"
+                ]
+            ),
+            source_url=(
+                DOSSIER_LIST_REMOTE_ENTRY
+            ),
+        )
+    )
+
+    # ----------------------------------
+    # DEDUPLICATE
+    # ----------------------------------
+    deduplicated_scripts = []
+
+    seen = set()
+
+    for url in initial_scripts:
+        if url in seen:
+            continue
+
+        seen.add(
+            url
+        )
+
+        deduplicated_scripts.append(
+            url
+        )
+
+    # ----------------------------------
+    # ANALYSE DOSSIER LIST JS
+    # ----------------------------------
+    javascript = (
+        analyse_javascript_tree(
+            session=session,
+            initial_urls=(
+                deduplicated_scripts
+            ),
+        )
+    )
+
+    # ----------------------------------
+    # COMBINE CONTEXTS
+    # ----------------------------------
+    all_contexts = list(
+        javascript[
+            "contexts"
+        ]
+    )
+
+    if remote_entry[
+        "text"
+    ]:
+        all_contexts.extend(
+            find_contexts(
+                text=(
+                    remote_entry[
+                        "text"
+                    ]
+                ),
+                source=(
+                    remote_entry[
                         "url"
                     ]
                 ),
             )
         )
 
-        config_result[
-            "discovered_from"
-        ] = (
-            config_row[
-                "source"
-            ]
+    if runtime_config[
+        "text"
+    ]:
+        all_contexts.extend(
+            find_contexts(
+                text=(
+                    runtime_config[
+                        "text"
+                    ]
+                ),
+                source=(
+                    runtime_config[
+                        "url"
+                    ]
+                ),
+            )
         )
 
-        config_results.append(
-            config_result
-        )
-
-    all_contexts = list(
-        javascript_analysis[
-            "contexts"
+    # ----------------------------------
+    # COMBINE ENDPOINT FRAGMENTS
+    # ----------------------------------
+    all_fragments = list(
+        javascript[
+            "fragments"
         ]
     )
 
-    for config_result in (
-        config_results
-    ):
-        all_contexts.extend(
-            config_result.get(
-                "contexts"
-            )
-            or []
-        )
-
-    json_config_values = []
-
-    for config_result in (
-        config_results
-    ):
-        if (
-            config_result[
-                "json"
-            ]
-            is None
-        ):
-            continue
-
-        found_values = (
-            find_json_key_values(
-                value=(
-                    config_result[
-                        "json"
-                    ]
-                ),
-                wanted_keys={
-                    "dossierListApiUrl",
-                    "dossierApiUrl",
-                    "mfe_regdas",
-                    "regdas",
-                },
-            )
-        )
-
-        for found_value in (
-            found_values
-        ):
-            found_value[
-                "source"
-            ] = (
-                config_result[
+    all_fragments.extend(
+        extract_endpoint_fragments(
+            text=(
+                remote_entry[
+                    "text"
+                ]
+            ),
+            source=(
+                remote_entry[
                     "url"
                 ]
-            )
-
-            json_config_values.append(
-                found_value
-            )
+            ),
+        )
+    )
 
     return {
-        "shell": (
-            shell
+        "remote_entry": (
+            remote_entry
+        ),
+        "runtime_config": (
+            runtime_config
+        ),
+        "manifest_references": (
+            manifest_references
+        ),
+        "initial_scripts": (
+            deduplicated_scripts
         ),
         "javascript": (
-            javascript_analysis
-        ),
-        "configs": (
-            config_results
+            javascript
         ),
         "contexts": (
             all_contexts
         ),
-        "json_config_values": (
-            json_config_values
-        ),
-        "api_candidates": (
-            extract_api_base_candidates(
-                all_contexts
-            )
+        "fragments": (
+            all_fragments
         ),
     }
 
@@ -1340,7 +1137,7 @@ def run_discovery():
 # STREAMLIT INTERFACE
 # --------------------------------------------------
 st.title(
-    "ECHA Registrants API discovery"
+    "ECHA Dossier List micro-frontend discovery"
 )
 
 st.caption(
@@ -1348,15 +1145,15 @@ st.caption(
 )
 
 st.write(
-    "V8 discovers the actual ECHA dossier-list "
-    "API configuration before testing another "
-    "registrants endpoint."
+    "V9 inspects only the ECHA dossierList "
+    "micro-frontend and its runtime configuration "
+    "to identify the exact registrants request."
 )
 
 st.info(
-    "This version performs discovery only. "
-    "It does not guess another registrant endpoint "
-    "and does not use browser automation."
+    "This test uses public ECHA resources only. "
+    "It does not use browser automation or attempt "
+    "to bypass access controls."
 )
 
 
@@ -1367,28 +1164,54 @@ st.subheader(
     "Known test substance"
 )
 
-metric_columns = (
+columns = (
     st.columns(3)
 )
 
-metric_columns[0].metric(
+columns[0].metric(
     "CAS",
     CAS_NUMBER,
 )
 
-metric_columns[1].metric(
+columns[1].metric(
     "EC",
     EC_NUMBER,
 )
 
-metric_columns[2].metric(
+columns[2].metric(
     "rmlId",
     RML_ID,
 )
 
 st.write(
-    "Expected ECHA CHEM benchmark: "
+    "Expected benchmark: "
     "**42 registrants**."
+)
+
+
+# --------------------------------------------------
+# RESOURCES
+# --------------------------------------------------
+st.subheader(
+    "Resources to inspect"
+)
+
+st.write(
+    "**dossierList remoteEntry:**"
+)
+
+st.code(
+    DOSSIER_LIST_REMOTE_ENTRY,
+    language=None,
+)
+
+st.write(
+    "**Runtime configuration:**"
+)
+
+st.code(
+    RUNTIME_CONFIG_URL,
+    language=None,
 )
 
 
@@ -1396,11 +1219,12 @@ st.write(
 # RUN
 # --------------------------------------------------
 if st.button(
-    "Discover actual dossier API configuration",
+    "Inspect dossierList micro-frontend",
     type="primary",
 ):
     with st.spinner(
-        "Inspecting ECHA frontend configuration..."
+        "Inspecting the ECHA dossierList "
+        "micro-frontend..."
     ):
         result = (
             run_discovery()
@@ -1410,127 +1234,133 @@ if st.button(
         "Discovery completed."
     )
 
-    shell = (
-        result[
-            "shell"
-        ]
-    )
-
-    javascript = (
-        result[
-            "javascript"
-        ]
-    )
-
-    configs = (
-        result[
-            "configs"
-        ]
-    )
-
     # ----------------------------------
-    # 1. APPLICATION SHELL
+    # 1. RESOURCE RESPONSES
     # ----------------------------------
     st.subheader(
-        "1. Application shell"
+        "1. Resource responses"
     )
 
-    shell_columns = (
-        st.columns(3)
-    )
+    response_rows = []
 
-    shell_columns[0].metric(
-        "HTTP",
+    resources = [
         (
-            shell[
-                "status"
-            ]
-            if (
-                shell[
-                    "status"
-                ]
-                is not None
-            )
-            else
-            "Error"
+            "dossierList remoteEntry",
+            result[
+                "remote_entry"
+            ],
         ),
+        (
+            "runtime configuration",
+            result[
+                "runtime_config"
+            ],
+        ),
+    ]
+
+    for (
+        label,
+        resource,
+    ) in resources:
+        response_rows.append(
+            {
+                "Resource": (
+                    label
+                ),
+                "URL": (
+                    resource[
+                        "url"
+                    ]
+                ),
+                "HTTP": (
+                    resource[
+                        "status"
+                    ]
+                ),
+                "Content-Type": (
+                    resource[
+                        "content_type"
+                    ]
+                ),
+                "Bytes": (
+                    resource[
+                        "bytes"
+                    ]
+                ),
+                "Valid JSON": (
+                    resource[
+                        "json"
+                    ]
+                    is not None
+                ),
+                "Error": (
+                    resource[
+                        "error"
+                    ]
+                ),
+            }
+        )
+
+    st.dataframe(
+        pd.DataFrame(
+            response_rows
+        ),
+        use_container_width=True,
+        hide_index=True,
     )
 
-    shell_columns[1].metric(
-        "HTML bytes",
-        shell[
-            "bytes"
-        ],
+    # ----------------------------------
+    # 2. JS REFERENCES
+    # ----------------------------------
+    st.subheader(
+        "2. JavaScript references "
+        "in remoteEntry"
     )
 
-    shell_columns[2].metric(
-        "Initial scripts",
-        len(
-            shell[
-                "scripts"
-            ]
-        ),
+    manifest_references = (
+        result[
+            "manifest_references"
+        ]
     )
+
+    if manifest_references:
+        st.dataframe(
+            pd.DataFrame(
+                manifest_references
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    else:
+        st.warning(
+            "No JavaScript file references "
+            "were parsed from remoteEntry.json."
+        )
 
     st.write(
-        "**Initial scripts:**"
+        "**Initial JavaScript URLs:**"
     )
 
     st.json(
-        shell[
-            "scripts"
+        result[
+            "initial_scripts"
         ]
     )
 
-    if shell[
-        "error"
-    ]:
-        st.error(
-            shell[
-                "error"
-            ]
-        )
-
     # ----------------------------------
-    # 2. JAVASCRIPT DISCOVERY
+    # 3. JS FILES
     # ----------------------------------
     st.subheader(
-        "2. JavaScript discovery"
+        "3. dossierList JavaScript files"
     )
 
     files = (
-        javascript[
+        result[
+            "javascript"
+        ][
             "files"
         ]
-    )
-
-    javascript_columns = (
-        st.columns(3)
-    )
-
-    javascript_columns[0].metric(
-        "Files analysed",
-        len(
-            files
-        ),
-    )
-
-    javascript_columns[1].metric(
-        "Relevant contexts",
-        len(
-            javascript[
-                "contexts"
-            ]
-        ),
-    )
-
-    javascript_columns[2].metric(
-        "Config URLs found",
-        len(
-            javascript[
-                "config_urls"
-            ]
-        ),
     )
 
     if files:
@@ -1544,27 +1374,27 @@ if st.button(
 
     else:
         st.warning(
-            "No JavaScript files "
-            "were analysed."
+            "No dossierList JavaScript "
+            "files were analysed."
         )
 
     # ----------------------------------
-    # 3. CONFIGURATION URLS
+    # 4. ENDPOINT FRAGMENTS
     # ----------------------------------
     st.subheader(
-        "3. Configuration URLs discovered"
+        "4. Registrant/API endpoint fragments"
     )
 
-    config_urls = (
-        javascript[
-            "config_urls"
+    fragments = (
+        result[
+            "fragments"
         ]
     )
 
-    if config_urls:
+    if fragments:
         st.dataframe(
             pd.DataFrame(
-                config_urls
+                fragments
             ),
             use_container_width=True,
             hide_index=True,
@@ -1572,171 +1402,53 @@ if st.button(
 
     else:
         st.warning(
-            "No configuration URLs "
-            "were extracted."
+            "No registrant/API endpoint "
+            "fragments were found."
         )
 
     # ----------------------------------
-    # 4. CONFIG RESPONSES
-    # ----------------------------------
-    st.subheader(
-        "4. Configuration responses"
-    )
-
-    if configs:
-        config_rows = []
-
-        for config in configs:
-            config_rows.append(
-                {
-                    "URL": (
-                        config[
-                            "url"
-                        ]
-                    ),
-                    "HTTP": (
-                        config[
-                            "status"
-                        ]
-                    ),
-                    "Content-Type": (
-                        config[
-                            "content_type"
-                        ]
-                    ),
-                    "Bytes": (
-                        config[
-                            "bytes"
-                        ]
-                    ),
-                    "Valid JSON": (
-                        config[
-                            "json"
-                        ]
-                        is not None
-                    ),
-                    "Relevant contexts": len(
-                        config[
-                            "contexts"
-                        ]
-                    ),
-                    "Error": (
-                        config[
-                            "error"
-                        ]
-                    ),
-                }
-            )
-
-        st.dataframe(
-            pd.DataFrame(
-                config_rows
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    else:
-        st.warning(
-            "No configuration files "
-            "were fetched."
-        )
-
-    # ----------------------------------
-    # 5. DOSSIER API CONFIG CONTEXTS
+    # 5. CRITICAL CONTEXTS
     # ----------------------------------
     st.subheader(
-        "5. dossierListApiUrl / "
-        "dossierApiUrl contexts"
+        "5. Critical code contexts"
     )
 
-    api_config_terms = {
-        "dossierlistapiurl",
-        "dossierapiurl",
-        "api-dossier-list/v1/",
-        "api-dossier-list",
-        "runtimeconfig",
-        "runtime-config",
-    }
-
-    api_config_contexts = [
-        row
-        for row in (
-            result[
-                "contexts"
-            ]
-        )
-        if (
-            row.get(
-                "term",
-                "",
-            ).lower()
-            in api_config_terms
-        )
-    ]
-
-    if api_config_contexts:
-        st.success(
-            "Dossier API configuration "
-            "context was found."
-        )
-
-        st.dataframe(
-            pd.DataFrame(
-                api_config_contexts
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    else:
-        st.warning(
-            "No dossier API configuration "
-            "context was found."
-        )
-
-    # ----------------------------------
-    # 6. REGISTRANTS CONTEXTS
-    # ----------------------------------
-    st.subheader(
-        "6. Registrants configuration contexts"
+    contexts = (
+        result[
+            "contexts"
+        ]
     )
 
-    registrant_terms = {
-        "asset-owner",
-        "assetowner",
+    critical_terms = {
         "registrants",
         "registrant",
-        'listtype:"registrants"',
+        "asset-owner",
+        "assetowner",
+        "dossierlistapiurl",
+        "dossierapiurl",
+        "api-dossier-list",
         "listtype",
-        "app-reach-registrants-list",
+        "pageindex",
+        "pagesize",
+        "rmlid",
     }
 
-    registrant_contexts = [
+    critical_contexts = [
         row
-        for row in (
-            result[
-                "contexts"
-            ]
-        )
+        for row in contexts
         if (
             row.get(
                 "term",
                 "",
             ).lower()
-            in registrant_terms
+            in critical_terms
         )
     ]
 
-    if registrant_contexts:
-        st.success(
-            "Registrant configuration "
-            "context was found."
-        )
-
+    if critical_contexts:
         st.dataframe(
             pd.DataFrame(
-                registrant_contexts
+                critical_contexts
             ),
             use_container_width=True,
             hide_index=True,
@@ -1744,168 +1456,94 @@ if st.button(
 
     else:
         st.warning(
-            "No registrant configuration "
+            "No critical dossierList "
             "contexts were found."
         )
 
     # ----------------------------------
-    # 7. API BASE CANDIDATES
+    # 6. RUNTIME CONFIG
     # ----------------------------------
     st.subheader(
-        "7. API base candidates"
+        "6. Runtime configuration JSON"
     )
 
-    api_candidates = (
+    runtime_config = (
         result[
-            "api_candidates"
+            "runtime_config"
         ]
     )
 
-    if api_candidates:
-        st.success(
-            "Potential dossier API base "
-            "values were extracted."
-        )
-
-        st.dataframe(
-            pd.DataFrame(
-                api_candidates
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    else:
-        st.warning(
-            "No complete dossier API base "
-            "value was extracted yet."
-        )
-
-    # ----------------------------------
-    # 8. DIRECT JSON CONFIG VALUES
-    # ----------------------------------
-    st.subheader(
-        "8. Direct API values from configuration"
-    )
-
-    json_config_values = (
-        result[
-            "json_config_values"
+    if (
+        runtime_config[
+            "json"
         ]
-    )
-
-    if json_config_values:
-        st.success(
-            "Relevant values were found "
-            "directly in configuration JSON."
-        )
-
-        display_values = [
-            {
-                "Source": (
-                    value[
-                        "source"
-                    ]
-                ),
-                "Path": (
-                    value[
-                        "path"
-                    ]
-                ),
-                "Key": (
-                    value[
-                        "key"
-                    ]
-                ),
-                "Value": str(
-                    value[
-                        "value"
-                    ]
-                ),
-            }
-            for value
-            in json_config_values
-        ]
-
-        st.dataframe(
-            pd.DataFrame(
-                display_values
-            ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    else:
-        st.warning(
-            "No dossierListApiUrl, "
-            "dossierApiUrl or regdas value "
-            "was found directly in JSON."
-        )
-
-    # ----------------------------------
-    # 9. PARSED CONFIGURATION JSON
-    # ----------------------------------
-    st.subheader(
-        "9. Parsed configuration JSON"
-    )
-
-    json_configs = [
-        config
-        for config
-        in configs
-        if (
-            config[
+        is not None
+    ):
+        st.json(
+            runtime_config[
                 "json"
             ]
-            is not None
         )
-    ]
-
-    if json_configs:
-        for config in (
-            json_configs
-        ):
-            with st.expander(
-                config[
-                    "url"
-                ],
-                expanded=False,
-            ):
-                st.json(
-                    config[
-                        "json"
-                    ]
-                )
 
     else:
         st.warning(
-            "No JSON configuration "
-            "response was found."
+            "Runtime configuration did "
+            "not return valid JSON."
         )
 
-    # ----------------------------------
-    # 10. CRITICAL CONTEXTS
-    # ----------------------------------
-    with st.expander(
-        "10. All critical discovery contexts",
-        expanded=False,
-    ):
-        contexts = (
-            result[
-                "contexts"
-            ]
-        )
-
-        if contexts:
-            st.dataframe(
-                pd.DataFrame(
-                    contexts
-                ),
-                use_container_width=True,
-                hide_index=True,
+        with st.expander(
+            "Raw runtime response",
+            expanded=False,
+        ):
+            st.code(
+                runtime_config[
+                    "text"
+                ][:10000],
+                language=None,
             )
 
-        else:
-            st.write(
-                "No critical contexts found."
+    # ----------------------------------
+    # 7. REMOTE ENTRY
+    # ----------------------------------
+    st.subheader(
+        "7. dossierList remoteEntry JSON"
+    )
+
+    remote_entry = (
+        result[
+            "remote_entry"
+        ]
+    )
+
+    if (
+        remote_entry[
+            "json"
+        ]
+        is not None
+    ):
+        with st.expander(
+            "Parsed remoteEntry.json",
+            expanded=False,
+        ):
+            st.json(
+                remote_entry[
+                    "json"
+                ]
+            )
+
+    else:
+        st.warning(
+            "dossierList remoteEntry "
+            "did not return valid JSON."
+        )
+
+        with st.expander(
+            "Raw remoteEntry response",
+            expanded=False,
+        ):
+            st.code(
+                remote_entry[
+                    "text"
+                ][:10000],
+                language=None,
             )
