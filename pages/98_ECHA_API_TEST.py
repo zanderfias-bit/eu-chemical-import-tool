@@ -1,5 +1,5 @@
-import json
-from pathlib import Path
+import re
+from urllib.parse import urljoin, urlparse
 
 import pandas as pd
 import requests
@@ -12,7 +12,7 @@ from urllib3.util.retry import Retry
 # PAGE CONFIGURATION
 # --------------------------------------------------
 st.set_page_config(
-    page_title="ECHA Registrants API Test",
+    page_title="ECHA Registrants Route Discovery",
     page_icon="🔎",
     layout="wide",
 )
@@ -21,95 +21,45 @@ st.set_page_config(
 # --------------------------------------------------
 # VERSION
 # --------------------------------------------------
-CODE_VERSION = "ECHA_REGISTRANTS_API_TEST_V1"
+CODE_VERSION = "ECHA_REGISTRANTS_ROUTE_DISCOVERY_V2"
 
 
 # --------------------------------------------------
-# TEST SUBSTANCE
+# KNOWN TEST SUBSTANCE
 # --------------------------------------------------
-TEST_CAS = "128-37-0"
-TEST_EC = "204-881-4"
-TEST_RML_ID = "100.004.439"
+CAS_NUMBER = "128-37-0"
+EC_NUMBER = "204-881-4"
+RML_ID = "100.004.439"
 
 ECHA_BASE_URL = "https://chem.echa.europa.eu"
 
+SUBSTANCE_OVERVIEW_URL = (
+    f"{ECHA_BASE_URL}/"
+    f"{RML_ID}/overview"
+)
 
-# --------------------------------------------------
-# IMPORTANT
-#
-# These are discovery candidates only.
-#
-# We do NOT assume that any of them is the correct
-# endpoint.
-#
-# The script will show exactly which endpoints exist
-# and what response ECHA returns.
-# --------------------------------------------------
-CANDIDATE_ENDPOINTS = [
-    {
-        "name": "Registrant list candidate 1",
-        "url": (
-            ECHA_BASE_URL
-            + "/api-dossier-list/v1/registrant"
-        ),
-    },
-    {
-        "name": "Registrant list candidate 2",
-        "url": (
-            ECHA_BASE_URL
-            + "/api-dossier-list/v1/registrants"
-        ),
-    },
-    {
-        "name": "Registrant list candidate 3",
-        "url": (
-            ECHA_BASE_URL
-            + "/api-dossier-list/v1/legal-entity"
-        ),
-    },
-    {
-        "name": "Registrant list candidate 4",
-        "url": (
-            ECHA_BASE_URL
-            + "/api-dossier-list/v1/legal-entities"
-        ),
-    },
-    {
-        "name": "Registration list candidate",
-        "url": (
-            ECHA_BASE_URL
-            + "/api-dossier-list/v1/registration"
-        ),
-    },
+REACH_REGISTRATION_URLS = [
+    f"{ECHA_BASE_URL}/{RML_ID}/dossiers/reach",
+    f"{ECHA_BASE_URL}/{RML_ID}/dossiers",
+    f"{ECHA_BASE_URL}/{RML_ID}/overview",
 ]
-
-
-# --------------------------------------------------
-# STANDARD PARAMETERS
-# --------------------------------------------------
-BASE_PARAMS = {
-    "pageIndex": 1,
-    "pageSize": 100,
-    "rmlId": TEST_RML_ID,
-    "legislation": "REACH",
-}
 
 
 # --------------------------------------------------
 # REQUEST SETTINGS
 # --------------------------------------------------
-CONNECT_TIMEOUT_SECONDS = 20
-READ_TIMEOUT_SECONDS = 60
+CONNECT_TIMEOUT = 20
+READ_TIMEOUT = 60
 
 HEADERS = {
     "Accept": (
-        "application/json, "
-        "text/plain, "
+        "text/html,"
+        "application/xhtml+xml,"
+        "application/json,"
+        "text/plain,"
         "*/*"
     ),
-    "Accept-Language": (
-        "en-US,en;q=0.9"
-    ),
+    "Accept-Language": "en-US,en;q=0.9",
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) "
         "AppleWebKit/537.36 "
@@ -120,7 +70,26 @@ HEADERS = {
 
 
 # --------------------------------------------------
-# SESSION
+# SEARCH TERMS
+# --------------------------------------------------
+SEARCH_TERMS = [
+    "registrant",
+    "registrants",
+    "registration",
+    "registrationNumber",
+    "registrationNumbers",
+    "legalEntity",
+    "legal-entity",
+    "rmlId",
+    "dossier-list",
+    "api-",
+    "/api/",
+    "/v1/",
+]
+
+
+# --------------------------------------------------
+# HTTP SESSION
 # --------------------------------------------------
 def create_session():
     session = requests.Session()
@@ -145,6 +114,7 @@ def create_session():
         allowed_methods=frozenset(
             {"GET"}
         ),
+        respect_retry_after_header=True,
         raise_on_status=False,
     )
 
@@ -161,471 +131,657 @@ def create_session():
 
 
 # --------------------------------------------------
-# SAFE JSON PARSER
+# SAFE REQUEST
 # --------------------------------------------------
-def parse_json_safe(response):
-    try:
-        return response.json()
-
-    except Exception:
-        return None
-
-
-# --------------------------------------------------
-# SEARCH JSON RECURSIVELY
-# --------------------------------------------------
-def search_json_for_values(
-    value,
-    search_terms,
-    path="root",
-    matches=None,
-):
-    if matches is None:
-        matches = []
-
-    if isinstance(value, dict):
-        for key, nested_value in value.items():
-            nested_path = (
-                f"{path}.{key}"
-            )
-
-            key_lower = (
-                str(key).lower()
-            )
-
-            matching_terms = [
-                term
-                for term in search_terms
-                if term.lower()
-                in key_lower
-            ]
-
-            if matching_terms:
-                matches.append(
-                    {
-                        "path": nested_path,
-                        "value": str(
-                            nested_value
-                        )[:500],
-                        "matched_on": (
-                            ", ".join(
-                                matching_terms
-                            )
-                        ),
-                    }
-                )
-
-            search_json_for_values(
-                nested_value,
-                search_terms,
-                nested_path,
-                matches,
-            )
-
-    elif isinstance(value, list):
-        for index, item in enumerate(
-            value
-        ):
-            search_json_for_values(
-                item,
-                search_terms,
-                (
-                    f"{path}"
-                    f"[{index}]"
-                ),
-                matches,
-            )
-
-    else:
-        text = str(value)
-
-        text_lower = (
-            text.lower()
-        )
-
-        matching_terms = [
-            term
-            for term in search_terms
-            if term.lower()
-            in text_lower
-        ]
-
-        if matching_terms:
-            matches.append(
-                {
-                    "path": path,
-                    "value": text[:500],
-                    "matched_on": (
-                        ", ".join(
-                            matching_terms
-                        )
-                    ),
-                }
-            )
-
-    return matches
-
-
-# --------------------------------------------------
-# TEST ONE ENDPOINT
-# --------------------------------------------------
-def test_endpoint(
+def safe_get(
     session,
-    endpoint,
+    url,
+    referer=None,
 ):
-    url = endpoint["url"]
+    request_headers = {}
 
-    print(
-        "",
-        flush=True,
-    )
-
-    print(
-        "=" * 80,
-        flush=True,
-    )
-
-    print(
-        "ECHA REGISTRANT "
-        "ENDPOINT TEST",
-        flush=True,
-    )
-
-    print(
-        f"NAME: "
-        f"{endpoint['name']}",
-        flush=True,
-    )
-
-    print(
-        f"GET: {url}",
-        flush=True,
-    )
-
-    print(
-        f"PARAMS: "
-        f"{BASE_PARAMS}",
-        flush=True,
-    )
+    if referer:
+        request_headers[
+            "Referer"
+        ] = referer
 
     try:
         response = session.get(
             url,
-            params=BASE_PARAMS,
+            headers=(
+                request_headers
+                or None
+            ),
             timeout=(
-                CONNECT_TIMEOUT_SECONDS,
-                READ_TIMEOUT_SECONDS,
+                CONNECT_TIMEOUT,
+                READ_TIMEOUT,
             ),
             allow_redirects=True,
         )
 
+        return {
+            "success": True,
+            "response": response,
+            "error": None,
+        }
+
     except Exception as error:
-        print(
-            "REQUEST ERROR: "
-            f"{error}",
-            flush=True,
+        return {
+            "success": False,
+            "response": None,
+            "error": str(error),
+        }
+
+
+# --------------------------------------------------
+# SCRIPT EXTRACTION
+# --------------------------------------------------
+def extract_script_urls(
+    html_text,
+    page_url,
+):
+    script_sources = re.findall(
+        r"""<script[^>]+src=["']([^"']+)["']""",
+        html_text or "",
+        flags=re.IGNORECASE,
+    )
+
+    urls = []
+
+    seen = set()
+
+    for source in script_sources:
+        full_url = urljoin(
+            page_url,
+            source,
         )
 
+        if full_url in seen:
+            continue
+
+        seen.add(
+            full_url
+        )
+
+        urls.append(
+            full_url
+        )
+
+    return urls
+
+
+# --------------------------------------------------
+# API STRING EXTRACTION
+# --------------------------------------------------
+def extract_api_like_strings(
+    text,
+):
+    if not text:
+        return []
+
+    patterns = [
+        r"""["']([^"']*?/api-[^"']+)["']""",
+        r"""["']([^"']*?/api/[^"']+)["']""",
+        r"""["']([^"']*?api-[A-Za-z0-9_\-/{}.?=&]+)["']""",
+        r"""["']([^"']*?/v1/[A-Za-z0-9_\-/{}.?=&]+)["']""",
+    ]
+
+    values = []
+
+    seen = set()
+
+    for pattern in patterns:
+        matches = re.findall(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        for match in matches:
+            match = (
+                str(match)
+                .replace("\\/", "/")
+                .strip()
+            )
+
+            if not match:
+                continue
+
+            if match in seen:
+                continue
+
+            seen.add(
+                match
+            )
+
+            values.append(
+                match
+            )
+
+    return values
+
+
+# --------------------------------------------------
+# SEARCH CONTEXT
+# --------------------------------------------------
+def find_contexts(
+    text,
+    source,
+):
+    if not text:
+        return []
+
+    contexts = []
+
+    seen = set()
+
+    lower_text = text.lower()
+
+    for term in SEARCH_TERMS:
+        term_lower = (
+            term.lower()
+        )
+
+        start_position = 0
+
+        while True:
+            position = lower_text.find(
+                term_lower,
+                start_position,
+            )
+
+            if position == -1:
+                break
+
+            context_start = max(
+                0,
+                position - 350,
+            )
+
+            context_end = min(
+                len(text),
+                position + len(term) + 650,
+            )
+
+            context = text[
+                context_start:
+                context_end
+            ]
+
+            context = (
+                context
+                .replace("\\n", " ")
+                .replace("\\r", " ")
+                .replace("\\t", " ")
+            )
+
+            context = re.sub(
+                r"\s+",
+                " ",
+                context,
+            ).strip()
+
+            key = (
+                term_lower,
+                context[:300],
+            )
+
+            if key not in seen:
+                seen.add(
+                    key
+                )
+
+                contexts.append(
+                    {
+                        "source": source,
+                        "term": term,
+                        "context": context,
+                    }
+                )
+
+            start_position = (
+                position
+                + len(term)
+            )
+
+            if len(contexts) >= 200:
+                return contexts
+
+    return contexts
+
+
+# --------------------------------------------------
+# ANALYSE PAGE
+# --------------------------------------------------
+def analyse_page(
+    session,
+    url,
+):
+    request_result = safe_get(
+        session,
+        url,
+    )
+
+    if not request_result[
+        "success"
+    ]:
         return {
-            "name": endpoint[
-                "name"
-            ],
             "requested_url": url,
             "final_url": None,
             "status": None,
             "content_type": None,
             "response_length": 0,
-            "json": None,
+            "scripts": [],
+            "api_strings": [],
+            "contexts": [],
             "body_preview": "",
-            "interesting_matches": [],
-            "error": str(error),
+            "error": request_result[
+                "error"
+            ],
         }
 
-    content_type = (
-        response.headers
-        .get(
-            "content-type",
-            "",
+    response = request_result[
+        "response"
+    ]
+
+    page_text = (
+        response.text
+    )
+
+    script_urls = (
+        extract_script_urls(
+            page_text,
+            response.url,
         )
     )
-
-    print(
-        "FINAL URL: "
-        f"{response.url}",
-        flush=True,
-    )
-
-    print(
-        "STATUS: "
-        f"{response.status_code}",
-        flush=True,
-    )
-
-    print(
-        "CONTENT TYPE: "
-        f"{content_type}",
-        flush=True,
-    )
-
-    print(
-        "BODY PREVIEW:",
-        flush=True,
-    )
-
-    print(
-        response.text[:2000],
-        flush=True,
-    )
-
-    parsed_json = (
-        parse_json_safe(
-            response
-        )
-    )
-
-    interesting_matches = []
-
-    if parsed_json is not None:
-        interesting_matches = (
-            search_json_for_values(
-                parsed_json,
-                [
-                    "BASF",
-                    "3M Belgium",
-                    "Afton",
-                    "registrant",
-                    "legal",
-                    "address",
-                    "status",
-                    "company",
-                    "organisation",
-                    "organization",
-                ],
-            )
-        )
-
-        if interesting_matches:
-            print(
-                "INTERESTING "
-                "JSON MATCHES:",
-                flush=True,
-            )
-
-            for item in (
-                interesting_matches[
-                    :50
-                ]
-            ):
-                print(
-                    item,
-                    flush=True,
-                )
 
     return {
-        "name": endpoint[
-            "name"
-        ],
         "requested_url": url,
-        "final_url": response.url,
+        "final_url": (
+            response.url
+        ),
         "status": (
             response.status_code
         ),
         "content_type": (
-            content_type
+            response.headers.get(
+                "content-type",
+                "",
+            )
         ),
         "response_length": len(
             response.content
         ),
-        "json": parsed_json,
-        "body_preview": (
-            response.text[:5000]
+        "scripts": script_urls,
+        "api_strings": (
+            extract_api_like_strings(
+                page_text
+            )
         ),
-        "interesting_matches": (
-            interesting_matches
+        "contexts": (
+            find_contexts(
+                page_text,
+                "PAGE HTML",
+            )
+        ),
+        "body_preview": (
+            page_text[:5000]
         ),
         "error": None,
     }
 
 
 # --------------------------------------------------
-# RUN TEST
+# ANALYSE JAVASCRIPT
 # --------------------------------------------------
-def run_registrant_test():
+def analyse_script(
+    session,
+    script_url,
+    referer,
+):
+    request_result = safe_get(
+        session,
+        script_url,
+        referer=referer,
+    )
+
+    if not request_result[
+        "success"
+    ]:
+        return {
+            "script_url": script_url,
+            "status": None,
+            "content_type": None,
+            "response_length": 0,
+            "api_strings": [],
+            "contexts": [],
+            "error": request_result[
+                "error"
+            ],
+        }
+
+    response = request_result[
+        "response"
+    ]
+
+    text = response.text
+
+    return {
+        "script_url": script_url,
+        "status": (
+            response.status_code
+        ),
+        "content_type": (
+            response.headers.get(
+                "content-type",
+                "",
+            )
+        ),
+        "response_length": len(
+            response.content
+        ),
+        "api_strings": (
+            extract_api_like_strings(
+                text
+            )
+        ),
+        "contexts": (
+            find_contexts(
+                text,
+                script_url,
+            )
+        ),
+        "error": None,
+    }
+
+
+# --------------------------------------------------
+# COMPLETE DISCOVERY
+# --------------------------------------------------
+def run_discovery():
     session = (
         create_session()
     )
 
-    results = []
+    page_results = []
 
-    print(
-        "ECHA code version: "
-        f"{CODE_VERSION}",
-        flush=True,
-    )
+    all_script_urls = []
 
-    print(
-        "TEST SUBSTANCE:",
-        flush=True,
-    )
+    seen_scripts = set()
 
-    print(
-        f"CAS: {TEST_CAS}",
-        flush=True,
-    )
-
-    print(
-        f"EC: {TEST_EC}",
-        flush=True,
-    )
-
-    print(
-        f"RML ID: "
-        f"{TEST_RML_ID}",
-        flush=True,
-    )
-
-    for endpoint in (
-        CANDIDATE_ENDPOINTS
+    for page_url in (
+        REACH_REGISTRATION_URLS
     ):
-        result = test_endpoint(
+        page_result = analyse_page(
             session,
-            endpoint,
+            page_url,
         )
 
-        results.append(
-            result
+        page_results.append(
+            page_result
         )
 
-    return results
+        for script_url in (
+            page_result[
+                "scripts"
+            ]
+        ):
+            if script_url in seen_scripts:
+                continue
+
+            seen_scripts.add(
+                script_url
+            )
+
+            all_script_urls.append(
+                script_url
+            )
+
+    script_results = []
+
+    referer = (
+        SUBSTANCE_OVERVIEW_URL
+    )
+
+    for script_url in (
+        all_script_urls
+    ):
+        script_result = (
+            analyse_script(
+                session,
+                script_url,
+                referer,
+            )
+        )
+
+        script_results.append(
+            script_result
+        )
+
+    api_strings = []
+
+    seen_api_strings = set()
+
+    for result in (
+        page_results
+    ):
+        for value in result[
+            "api_strings"
+        ]:
+            if (
+                value
+                in seen_api_strings
+            ):
+                continue
+
+            seen_api_strings.add(
+                value
+            )
+
+            api_strings.append(
+                {
+                    "source": (
+                        "PAGE HTML"
+                    ),
+                    "value": value,
+                }
+            )
+
+    for result in (
+        script_results
+    ):
+        for value in result[
+            "api_strings"
+        ]:
+            if (
+                value
+                in seen_api_strings
+            ):
+                continue
+
+            seen_api_strings.add(
+                value
+            )
+
+            api_strings.append(
+                {
+                    "source": (
+                        result[
+                            "script_url"
+                        ]
+                    ),
+                    "value": value,
+                }
+            )
+
+    all_contexts = []
+
+    for result in page_results:
+        all_contexts.extend(
+            result[
+                "contexts"
+            ]
+        )
+
+    for result in script_results:
+        all_contexts.extend(
+            result[
+                "contexts"
+            ]
+        )
+
+    return {
+        "pages": (
+            page_results
+        ),
+        "scripts": (
+            script_results
+        ),
+        "api_strings": (
+            api_strings
+        ),
+        "contexts": (
+            all_contexts
+        ),
+    }
 
 
 # --------------------------------------------------
 # STREAMLIT UI
 # --------------------------------------------------
 st.title(
-    "ECHA Registrants API discovery"
+    "ECHA Registrants route discovery"
 )
 
 st.caption(
     f"Version: {CODE_VERSION}"
 )
 
+st.write(
+    "This diagnostic inspects the public "
+    "ECHA CHEM application resources for the "
+    "API route used by the REACH Registrants tab."
+)
+
 st.info(
-    "This page tests possible ECHA REST "
-    "routes for the REACH Registrants tab. "
-    "It does not use browser automation and "
-    "does not attempt to bypass ECHA access "
-    "controls."
+    "This test does not use Selenium, "
+    "Playwright, browser automation, CAPTCHA "
+    "handling, authentication bypasses or "
+    "anti-bot workarounds."
 )
 
 
 # --------------------------------------------------
-# TEST CHEMICAL
+# CHEMICAL
 # --------------------------------------------------
 st.subheader(
-    "Test substance"
+    "Known test substance"
 )
 
-column1, column2, column3 = (
+col1, col2, col3 = (
     st.columns(3)
 )
 
-column1.metric(
+col1.metric(
     "CAS",
-    TEST_CAS,
+    CAS_NUMBER,
 )
 
-column2.metric(
+col2.metric(
     "EC",
-    TEST_EC,
+    EC_NUMBER,
 )
 
-column3.metric(
-    "RML ID",
-    TEST_RML_ID,
-)
-
-st.write(
-    "Expected benchmark from the "
-    "ECHA Registrants tab:"
+col3.metric(
+    "rmlId",
+    RML_ID,
 )
 
 st.write(
-    "- approximately 42 registrants"
+    "Expected benchmark:"
 )
 
 st.write(
-    "- known visible examples include "
-    "3M Belgium, Afton Chemical and BASF SE"
+    "**42 registrants** are visible "
+    "in the ECHA CHEM Registrants tab "
+    "for this test case."
 )
 
 
 # --------------------------------------------------
-# RUN BUTTON
+# RUN
 # --------------------------------------------------
-run_button = st.button(
-    "Test registrant API routes",
+if st.button(
+    "Discover registrants route",
     type="primary",
-)
-
-
-if run_button:
+):
     with st.spinner(
-        "Testing ECHA registrant "
-        "API routes..."
+        "Inspecting ECHA CHEM "
+        "application resources..."
     ):
-        results = (
-            run_registrant_test()
+        result = (
+            run_discovery()
         )
 
     st.success(
-        "Endpoint discovery "
-        "test completed."
+        "Discovery completed."
     )
 
     # ----------------------------------
-    # SUMMARY
+    # PAGE RESULTS
     # ----------------------------------
     st.subheader(
-        "Endpoint results"
+        "1. Page requests"
     )
 
-    summary_rows = []
+    page_rows = []
 
-    for result in results:
-        summary_rows.append(
+    for page in result[
+        "pages"
+    ]:
+        page_rows.append(
             {
-                "Test": (
-                    result["name"]
+                "Requested URL": (
+                    page[
+                        "requested_url"
+                    ]
                 ),
                 "HTTP": (
-                    result[
+                    page[
                         "status"
                     ]
                 ),
-                "Content type": (
-                    result[
+                "Final URL": (
+                    page[
+                        "final_url"
+                    ]
+                ),
+                "Content-Type": (
+                    page[
                         "content_type"
                     ]
                 ),
-                "Response bytes": (
-                    result[
+                "Bytes": (
+                    page[
                         "response_length"
                     ]
                 ),
-                "JSON": (
-                    result["json"]
-                    is not None
-                ),
-                "Relevant matches": (
+                "JavaScript files": (
                     len(
-                        result[
-                            "interesting_matches"
+                        page[
+                            "scripts"
+                        ]
+                    )
+                ),
+                "Keyword contexts": (
+                    len(
+                        page[
+                            "contexts"
                         ]
                     )
                 ),
                 "Error": (
-                    result[
+                    page[
                         "error"
                     ]
                 ),
@@ -634,132 +790,204 @@ if run_button:
 
     st.dataframe(
         pd.DataFrame(
-            summary_rows
+            page_rows
         ),
         width="stretch",
         hide_index=True,
     )
 
     # ----------------------------------
-    # DETAILS
+    # SCRIPT RESULTS
     # ----------------------------------
     st.subheader(
-        "Detailed results"
+        "2. JavaScript resources"
     )
 
-    for result in results:
-        title = (
-            f"{result['name']} "
-            f"— HTTP "
-            f"{result['status']}"
+    script_rows = []
+
+    for script in   script_rows.append(
+            {
+                "Script": (
+                    script[
+                        "script_url"
+                    ]
+                ),
+                "HTTP": (
+                    script[
+                        "status"
+                    ]
+                ),
+                "Content-Type": (
+                    script[
+                        "content_type"
+                    ]
+                ),
+                "Bytes": (
+                    script[
+                        "response_length"
+                    ]
+                ),
+                "API-like strings": (
+                    len(
+                        script[
+                            "api_strings"
+                        ]
+                    )
+                ),
+                "Keyword contexts": (
+                    len(
+                        script[
+                            "contexts"
+                        ]
+                    )
+                ),
+                "Error": (
+                    script[
+                        "error"
+                    ]
+                ),
+            }
         )
 
-        with st.expander(
-            title,
-            expanded=(
-                result[
-                    "status"
-                ]
-                == 200
+    if script_rows:
+        st.dataframe(
+            pd.DataFrame(
+                script_rows
             ),
-        ):
-            st.write(
-                "**Requested endpoint:**"
+            width="stretch",
+            hide_index=True,
+        )
+
+    else:
+        st.warning(
+            "No JavaScript resource URLs "
+            "were discovered."
+        )
+
+    # ----------------------------------
+    # API STRINGS
+    # ----------------------------------
+    st.subheader(
+        "3. API-like strings"
+    )
+
+    if result[
+        "api_strings"
+    ]:
+        st.success(
+            "API-like strings were found."
+        )
+
+        st.dataframe(
+            pd.DataFrame(
+                result[
+                    "api_strings"
+                ]
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+
+    else:
+        st.warning(
+            "No explicit API-like strings "
+            "were found."
+        )
+
+    # ----------------------------------
+    # REGISTRANT CONTEXTS
+    # ----------------------------------
+    st.subheader(
+        "4. Registrant-related code contexts"
+    )
+
+    useful_contexts = [
+        row
+        for row in result[
+            "contexts"
+        ]
+        if row[
+            "term"
+        ].lower()
+        in {
+            "registrant",
+            "registrants",
+            "registration",
+            "registrationnumber",
+            "registrationnumbers",
+            "legalentity",
+            "legal-entity",
+            "rmlid",
+            "dossier-list",
+            "api-",
+            "/api/",
+            "/v1/",
+        }
+    ]
+
+    if useful_contexts:
+        st.success(
+            "Relevant frontend code "
+            "contexts were found."
+        )
+
+        st.dataframe(
+            pd.DataFrame(
+                useful_contexts
+            ),
+            width="stretch",
+            hide_index=True,
+        )
+
+    else:
+        st.warning(
+            "No registrant-related frontend "
+            "code context was found."
+        )
+
+    # ----------------------------------
+    # RAW PAGE DETAILS
+    # ----------------------------------
+    with st.expander(
+        "Raw page diagnostics",
+        expanded=False,
+    ):
+        for page in result[
+            "pages"
+        ]:
+            st.markdown(
+                "### Page"
             )
 
             st.code(
-                result[
+                page[
                     "requested_url"
                 ],
                 language=None,
             )
 
-            if result[
-                "final_url"
-            ]:
-                st.write(
-                    "**Final URL:**"
-                )
-
-                st.code(
-                    result[
-                        "final_url"
-                    ],
-                    language=None,
-                )
-
-            if result[
-                "error"
-            ]:
-                st.error(
-                    result[
-                        "error"
-                    ]
-                )
-
-                continue
-
             st.write(
-                "**HTTP status:** "
-                f"{result['status']}"
+                f"HTTP: "
+                f"{page['status']}"
             )
 
             st.write(
-                "**Content-Type:** "
-                f"{result['content_type']}"
+                "**Discovered scripts:**"
             )
 
-            # --------------------------
-            # FOUND MATCHES
-            # --------------------------
-            matches = (
-                result[
-                    "interesting_matches"
+            st.json(
+                page[
+                    "scripts"
                 ]
             )
 
-            if matches:
-                st.success(
-                    "Interesting registrant-"
-                    "related values were "
-                    "found in this response."
-                )
+            st.write(
+                "**HTML preview:**"
+            )
 
-                st.dataframe(
-                    pd.DataFrame(
-                        matches
-                    ),
-                    width="stretch",
-                    hide_index=True,
-                )
-
-            # --------------------------
-            # JSON
-            # --------------------------
-            if (
-                result["json"]
-                is not None
-            ):
-                with st.expander(
-                    "Parsed JSON",
-                    expanded=False,
-                ):
-                    st.json(
-                        result[
-                            "json"
-                        ]
-                    )
-
-            # --------------------------
-            # RAW BODY
-            # --------------------------
-            with st.expander(
-                "Raw response preview",
-                expanded=False,
-            ):
-                st.code(
-                    result[
-                        "body_preview"
-                    ],
-                    language=None,
-                )
+            st.code(
+                page[
+                    "body_preview"
+                ],
+                language="html",
+            )
