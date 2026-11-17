@@ -806,7 +806,7 @@ def extract_internal_dossier_links(
         return []
 
     href_values = re.findall(
-        r'href\s*=\s*["\']([^"\']+)["\']',
+        r"""href\s*=\s*["']([^"']+)["']""",
         index_html,
         flags=re.IGNORECASE,
     )
@@ -1732,7 +1732,7 @@ def run_test(
 
         if status:
 
-            request_params   "registrationStatuses" = status
+            request_params  [ "registrationStatuses"] = status
 
         try:
 
