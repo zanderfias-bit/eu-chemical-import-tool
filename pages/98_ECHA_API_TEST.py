@@ -1014,7 +1014,7 @@ def fetch_config_url(
     contexts = find_contexts(
         text=textl
         ),
-    )
+    
 
     return {
         "url": (
