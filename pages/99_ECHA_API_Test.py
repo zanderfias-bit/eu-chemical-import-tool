@@ -25,7 +25,7 @@ st.set_page_config(
 # --------------------------------------------------
 # VERSION
 # --------------------------------------------------
-CODE_VERSION = "ECHA_REST_API_TEST_V9"
+CODE_VERSION = "ECHA_REST_API_TEST_V10"
 
 
 # --------------------------------------------------
@@ -799,45 +799,111 @@ def build_document_url(
     )
 
 
-def find_substance_document(
+# --------------------------------------------------
+# V10 DOCUMENT SELECTION
+# --------------------------------------------------
+def rank_identity_documents(
     document_links,
 ):
-    exact_matches = [
-        link
-        for link in document_links
-        if (
-            normalise_text(
-                link.get(
-                    "label"
-                )
-            ).lower()
-            == "substance"
-        )
-    ]
+    ranked_documents = []
 
-    if exact_matches:
-        return exact_matches[0]
-
-    header_matches = [
-        link
-        for link in document_links
-        if (
-            "das-header-doc-link"
-            in normalise_text(
-                link.get(
-                    "class"
-                )
+    for link in document_links:
+        label = normalise_text(
+            link.get(
+                "label"
             )
         )
+
+        css_class = normalise_text(
+            link.get(
+                "class"
+            )
+        )
+
+        lower_label = (
+            label.lower()
+        )
+
+        # Do not use the dossier header itself.
+        if (
+            "das-header-doc-link"
+            in css_class
+        ):
+            continue
+
+        if (
+            lower_label
+            == "echa dossier publication"
+        ):
+            continue
+
+        # Substance is normally the best source.
+        if lower_label == "substance":
+            score = 0
+
+        # Older dossiers may organise this differently.
+        elif any(
+            term in lower_label
+            for term in (
+                "identification",
+                "legal entity",
+                "registrant",
+            )
+        ):
+            score = 1
+
+        elif any(
+            term in lower_label
+            for term in (
+                "manufacturer",
+                "importer",
+                "only representative",
+            )
+        ):
+            score = 2
+
+        else:
+            score = 10
+
+        ranked_documents.append(
+            (
+                score,
+                link,
+            )
+        )
+
+    ranked_documents.sort(
+        key=lambda item: item[0]
+    )
+
+    return [
+        link
+        for _, link
+        in ranked_documents
     ]
 
-    if header_matches:
-        return header_matches[0]
 
-    if document_links:
-        return document_links[0]
+def document_has_identity_evidence(
+    html_content,
+):
+    searchable_text = (
+        html_to_searchable_text(
+            html_content
+        ).lower()
+    )
 
-    return None
+    identity_terms = (
+        "legal entity",
+        "registrant",
+        "manufacturer",
+        "importer",
+        "only representative",
+    )
+
+    return any(
+        term in searchable_text
+        for term in identity_terms
+    )
 
 
 # --------------------------------------------------
@@ -908,15 +974,20 @@ def extract_label_value_pairs(
         ),
     )
 
-    for label_html, value_html in (
-        definition_pairs
-    ):
-        label = html_to_searchable_text(
-            label_html
+    for (
+        label_html,
+        value_html,
+    ) in definition_pairs:
+        label = (
+            html_to_searchable_text(
+                label_html
+            )
         )
 
-        value = html_to_searchable_text(
-            value_html
+        value = (
+            html_to_searchable_text(
+                value_html
+            )
         )
 
         if label and value:
@@ -982,7 +1053,9 @@ def clean_published_entity_name(
     if len(value) > 250:
         return ""
 
-    lower_value = value.lower()
+    lower_value = (
+        value.lower()
+    )
 
     rejected_exact_values = {
         "legal entity",
@@ -1011,12 +1084,16 @@ def clean_published_entity_name(
         "registrant specific",
     }
 
-    if lower_value in rejected_exact_values:
+    if (
+        lower_value
+        in rejected_exact_values
+    ):
         return ""
 
     if any(
         fragment in lower_value
-        for fragment in rejected_fragments
+        for fragment
+        in rejected_fragments
     ):
         return ""
 
@@ -1042,13 +1119,19 @@ def extract_published_entity_name(
         )
     )
 
-    for label, value in label_value_pairs:
-        normalised_label = normalise_text(
-            label
-        ).lower()
+    for (
+        label,
+        value,
+    ) in label_value_pairs:
+        normalised_label = (
+            normalise_text(
+                label
+            ).lower()
+        )
 
-        if normalised_label not in (
-            accepted_labels
+        if (
+            normalised_label
+            not in accepted_labels
         ):
             continue
 
@@ -1086,8 +1169,10 @@ def classify_legal_entity(
     (
         published_name,
         source_field,
-    ) = extract_published_entity_name(
-        html_content
+    ) = (
+        extract_published_entity_name(
+            html_content
+        )
     )
 
     if published_name:
@@ -1157,10 +1242,10 @@ def classify_legal_entity(
             "legal_entity_name": "",
             "legal_entity_field": "",
             "evidence": (
-                "The document mentions "
-                "legal-entity or registrant "
-                "fields, but no public name "
-                "was found."
+                "The document contains "
+                "identity-related fields, "
+                "but no public legal-entity "
+                "name was found."
             ),
         }
 
@@ -1172,8 +1257,7 @@ def classify_legal_entity(
         "legal_entity_field": "",
         "evidence": (
             "No public legal-entity field "
-            "was found in the selected "
-            "document."
+            "was found in this document."
         ),
     }
 
@@ -1246,6 +1330,7 @@ def get_published_registration_identity(
         "document_status": None,
         "document_label": "",
         "document_url": "",
+        "documents_checked": 0,
         "legal_entity_status": (
             "Not available"
         ),
@@ -1279,6 +1364,9 @@ def get_published_registration_identity(
     )
 
     try:
+        # ----------------------------------
+        # LOAD DOSSIER INDEX
+        # ----------------------------------
         index_response = (
             execute_echa_request(
                 session=session,
@@ -1292,7 +1380,7 @@ def get_published_registration_identity(
                     ),
                     "Referer": referer,
                 },
-                preview_length=250,
+                preview_length=200,
             )
         )
 
@@ -1328,95 +1416,181 @@ def get_published_registration_identity(
 
             return result
 
-        substance_document = (
-            find_substance_document(
+        # ----------------------------------
+        # V10: RANK REAL DOCUMENTS
+        # ----------------------------------
+        candidate_documents = (
+            rank_identity_documents(
                 document_links
             )
         )
 
-        if not substance_document:
-            result["error"] = (
-                "No suitable published "
-                "dossier document was found."
+        if not candidate_documents:
+            result["evidence"] = (
+                "No publishable dossier "
+                "documents were present "
+                "in the index."
             )
 
             return result
 
-        document_url = (
-            build_document_url(
-                index_url=(
-                    index_response.url
-                ),
-                document_key=(
-                    substance_document[
-                        "document_key"
-                    ]
-                ),
-            )
-        )
+        first_success_status = None
+        first_success_url = ""
+        first_success_label = ""
 
-        result["document_label"] = (
-            substance_document[
-                "label"
-            ]
-        )
+        found_identity_evidence = False
 
-        result["document_url"] = (
-            document_url
-        )
-
-        time.sleep(
-            REQUEST_DELAY_SECONDS
-        )
-
-        document_response = (
-            execute_echa_request(
-                session=session,
-                url=document_url,
-                additional_headers={
-                    "Accept": (
-                        "text/html,"
-                        "application/xhtml+xml,"
-                        "application/xml;q=0.9,"
-                        "*/*;q=0.8"
-                    ),
-                    "Referer": (
+        # ----------------------------------
+        # V10: CHECK DOCUMENTS
+        # ----------------------------------
+        for document_link in (
+            candidate_documents
+        ):
+            document_url = (
+                build_document_url(
+                    index_url=(
                         index_response.url
                     ),
-                },
-                preview_length=250,
+                    document_key=(
+                        document_link[
+                            "document_key"
+                        ]
+                    ),
+                )
             )
-        )
 
-        result["document_status"] = (
-            document_response.status_code
-        )
+            time.sleep(
+                REQUEST_DELAY_SECONDS
+            )
 
-        result["document_url"] = (
-            document_response.url
-        )
+            document_response = (
+                execute_echa_request(
+                    session=session,
+                    url=document_url,
+                    additional_headers={
+                        "Accept": (
+                            "text/html,"
+                            "application/xhtml+xml,"
+                            "application/xml;q=0.9,"
+                            "*/*;q=0.8"
+                        ),
+                        "Referer": (
+                            index_response.url
+                        ),
+                    },
+                    preview_length=150,
+                )
+            )
 
+            result[
+                "documents_checked"
+            ] += 1
+
+            # Keep the first successful
+            # real document as diagnostics.
+            if first_success_status is None:
+                first_success_status = (
+                    document_response.status_code
+                )
+
+                first_success_url = (
+                    document_response.url
+                )
+
+                first_success_label = (
+                    document_link[
+                        "label"
+                    ]
+                )
+
+            if (
+                document_response.status_code
+                != 200
+            ):
+                continue
+
+            # Ignore documents that have
+            # nothing to do with identity.
+            if not (
+                document_has_identity_evidence(
+                    document_response.text
+                )
+            ):
+                continue
+
+            found_identity_evidence = True
+
+            entity_result = (
+                classify_legal_entity(
+                    document_response.text
+                )
+            )
+
+            result["document_status"] = (
+                document_response.status_code
+            )
+
+            result["document_label"] = (
+                document_link[
+                    "label"
+                ]
+            )
+
+            result["document_url"] = (
+                document_response.url
+            )
+
+            result.update(
+                entity_result
+            )
+
+            # Strong result:
+            # stop scanning this dossier.
+            if entity_result[
+                "legal_entity_status"
+            ] in {
+                "Published",
+                "Not publishable",
+            }:
+                return result
+
+        # ----------------------------------
+        # NOTHING DEFINITIVE FOUND
+        # ----------------------------------
         if (
-            document_response.status_code
-            != 200
+            result["document_status"]
+            is None
         ):
-            result["error"] = (
-                "Published document "
-                "returned HTTP "
-                f"{document_response.status_code}."
+            result["document_status"] = (
+                first_success_status
             )
 
-            return result
-
-        entity_result = (
-            classify_legal_entity(
-                document_response.text
+            result["document_url"] = (
+                first_success_url
             )
-        )
 
-        result.update(
-            entity_result
-        )
+            result["document_label"] = (
+                first_success_label
+            )
+
+        if not found_identity_evidence:
+            result["evidence"] = (
+                "All published dossier "
+                "documents were checked, "
+                "but none contained a "
+                "public legal-entity or "
+                "registrant field."
+            )
+
+        elif not result["evidence"]:
+            result["evidence"] = (
+                "Identity-related fields "
+                "were found, but no "
+                "published name or explicit "
+                "[Not publishable] "
+                "legal-entity value was "
+                "identified."
+            )
 
         return result
 
@@ -1521,13 +1695,21 @@ def scan_active_registrations(
     successful_index_count = sum(
         1
         for row in results
-        if row["index_status"] == 200
+        if (
+            row["index_status"]
+            == 200
+        )
     )
 
     successful_document_count = sum(
         1
         for row in results
-        if row["document_status"] == 200
+        if (
+            row[
+                "document_status"
+            ]
+            == 200
+        )
     )
 
     error_count = sum(
@@ -1558,7 +1740,9 @@ def scan_active_registrations(
         "successful_document_count": (
             successful_document_count
         ),
-        "error_count": error_count,
+        "error_count": (
+            error_count
+        ),
         "results": results,
     }
 
@@ -1566,7 +1750,9 @@ def scan_active_registrations(
 # --------------------------------------------------
 # COMPLETE TEST
 # --------------------------------------------------
-def run_test(cas_number):
+def run_test(
+    cas_number,
+):
     print(
         f"ECHA code version: "
         f"{CODE_VERSION}",
@@ -1579,7 +1765,9 @@ def run_test(cas_number):
         flush=True,
     )
 
-    dataframe = load_echa_data()
+    dataframe = (
+        load_echa_data()
+    )
 
     local_results = (
         find_substance_by_cas(
@@ -1595,7 +1783,9 @@ def run_test(cas_number):
             "reach_registrations.xlsx."
         )
 
-    selected = local_results[0]
+    selected = (
+        local_results[0]
+    )
 
     print(
         f"ECHA local match: "
@@ -1603,7 +1793,9 @@ def run_test(cas_number):
         flush=True,
     )
 
-    if not selected["rml_id"]:
+    if not selected[
+        "rml_id"
+    ]:
         raise RuntimeError(
             "The ECHA rmlId could not "
             "be extracted from: "
@@ -1614,6 +1806,9 @@ def run_test(cas_number):
         create_http_session()
     )
 
+    # ----------------------------------
+    # SUBSTANCE
+    # ----------------------------------
     substance_result = None
     substance_error = None
 
@@ -1622,16 +1817,21 @@ def run_test(cas_number):
             get_substance_identity(
                 session=session,
                 rml_id=(
-                    selected["rml_id"]
+                    selected[
+                        "rml_id"
+                    ]
                 ),
             )
         )
 
     except Exception as error:
-        substance_error = str(
-            error
+        substance_error = (
+            str(error)
         )
 
+    # ----------------------------------
+    # DOSSIERS
+    # ----------------------------------
     dossier_attempts = []
 
     for status in (
@@ -1644,7 +1844,9 @@ def run_test(cas_number):
                 get_reach_dossiers(
                     session=session,
                     rml_id=(
-                        selected["rml_id"]
+                        selected[
+                            "rml_id"
+                        ]
                     ),
                     registration_status=(
                         status
@@ -1652,8 +1854,12 @@ def run_test(cas_number):
                 )
             )
 
-            items = extract_items(
-                response["body"]
+            items = (
+                extract_items(
+                    response[
+                        "body"
+                    ]
+                )
             )
 
             dossier_attempts.append(
@@ -1668,12 +1874,18 @@ def run_test(cas_number):
                             "status_code"
                         ]
                     ),
-                    "url": response["url"],
-                    "params": (
-                        response["params"]
+                    "url": (
+                        response[
+                            "url"
+                        ]
                     ),
-                    "item_count": len(
-                        items
+                    "params": (
+                        response[
+                            "params"
+                        ]
+                    ),
+                    "item_count": (
+                        len(items)
                     ),
                     "items": items,
                     "summary": (
@@ -1682,7 +1894,9 @@ def run_test(cas_number):
                         )
                     ),
                     "raw_body": (
-                        response["body"]
+                        response[
+                            "body"
+                        ]
                     ),
                     "error": None,
                 }
@@ -1703,10 +1917,15 @@ def run_test(cas_number):
                     "items": [],
                     "summary": [],
                     "raw_body": None,
-                    "error": str(error),
+                    "error": str(
+                        error
+                    ),
                 }
             )
 
+    # ----------------------------------
+    # ACTIVE DOSSIER SCAN
+    # ----------------------------------
     active_attempt = next(
         (
             attempt
@@ -1737,14 +1956,20 @@ def run_test(cas_number):
                     ]
                 ),
                 rml_id=(
-                    selected["rml_id"]
+                    selected[
+                        "rml_id"
+                    ]
                 ),
             )
         )
 
     return {
-        "version": CODE_VERSION,
-        "local_substance": selected,
+        "version": (
+            CODE_VERSION
+        ),
+        "local_substance": (
+            selected
+        ),
         "substance_result": (
             substance_result
         ),
@@ -1772,10 +1997,12 @@ st.caption(
 )
 
 st.write(
-    "This version retrieves the public REACH "
-    "dossiers and checks every active registration "
-    "for a published legal-entity name. Values "
-    "marked by ECHA as not publishable remain hidden."
+    "This version retrieves public REACH "
+    "dossiers and checks every active "
+    "registration for a published legal-entity "
+    "name. Older dossier structures are also "
+    "searched. Values marked by ECHA as "
+    "not publishable remain hidden."
 )
 
 st.caption(
@@ -1786,7 +2013,9 @@ st.caption(
 cas_number = st.text_input(
     "CAS number",
     value="128-37-0",
-    placeholder="For example: 128-37-0",
+    placeholder=(
+        "For example: 128-37-0"
+    ),
 )
 
 run_button = st.button(
@@ -1796,12 +2025,16 @@ run_button = st.button(
 
 
 if run_button:
-    cleaned_cas = normalise_text(
-        cas_number
+    cleaned_cas = (
+        normalise_text(
+            cas_number
+        )
     )
 
-    if not looks_like_cas_number(
-        cleaned_cas
+    if not (
+        looks_like_cas_number(
+            cleaned_cas
+        )
     ):
         st.error(
             "Enter a valid CAS number, "
@@ -1811,12 +2044,15 @@ if run_button:
         st.stop()
 
     with st.spinner(
-        "Retrieving ECHA data and checking "
-        "all active published dossiers..."
+        "Retrieving ECHA data and "
+        "checking all active "
+        "published dossiers..."
     ):
         try:
-            test_result = run_test(
-                cleaned_cas
+            test_result = (
+                run_test(
+                    cleaned_cas
+                )
             )
 
         except Exception as error:
@@ -1844,26 +2080,32 @@ if run_button:
         "1. Local substance match"
     )
 
-    col1, col2, col3 = st.columns(
-        3
+    col1, col2, col3 = (
+        st.columns(3)
     )
 
     col1.metric(
         "CAS number",
-        substance["cas_number"],
+        substance[
+            "cas_number"
+        ],
     )
 
     col2.metric(
         "EC number",
         (
-            substance["ec_number"]
+            substance[
+                "ec_number"
+            ]
             or "Not available"
         ),
     )
 
     col3.metric(
         "ECHA rmlId",
-        substance["rml_id"],
+        substance[
+            "rml_id"
+        ],
     )
 
     st.write(
@@ -1893,7 +2135,9 @@ if run_button:
         )
 
         substance_body = (
-            substance_api["body"]
+            substance_api[
+                "body"
+            ]
         )
 
         st.success(
@@ -1936,7 +2180,8 @@ if run_button:
                     substance_body.get(
                         "tonnageBand"
                     )
-                    or "Not available"
+                    or
+                    "Not available"
                 ),
             )
 
@@ -1956,7 +2201,8 @@ if run_button:
                 "substance_error"
             ]
             or
-            "The substance endpoint failed."
+            "The substance endpoint "
+            "failed."
         )
 
     # ----------------------------------
@@ -1986,7 +2232,9 @@ if run_button:
                 == "Active"
             ),
         ):
-            if attempt["success"]:
+            if attempt[
+                "success"
+            ]:
                 st.success(
                     "HTTP "
                     f"{attempt['status_code']} | "
@@ -1994,10 +2242,14 @@ if run_button:
                     "dossier item(s)"
                 )
 
-                if attempt["summary"]:
+                if attempt[
+                    "summary"
+                ]:
                     st.dataframe(
                         pd.DataFrame(
-                            attempt["summary"]
+                            attempt[
+                                "summary"
+                            ]
                         ),
                         width="stretch",
                         hide_index=True,
@@ -2008,11 +2260,15 @@ if run_button:
                     expanded=False,
                 ):
                     st.json(
-                        attempt["params"]
+                        attempt[
+                            "params"
+                        ]
                     )
 
                     st.code(
-                        attempt["url"],
+                        attempt[
+                            "url"
+                        ],
                         language=None,
                     )
 
@@ -2028,7 +2284,9 @@ if run_button:
 
             else:
                 st.error(
-                    attempt["error"]
+                    attempt[
+                        "error"
+                    ]
                 )
 
     # ----------------------------------
@@ -2047,8 +2305,9 @@ if run_button:
 
     if not active_scan:
         st.warning(
-            "No successful Active dossier "
-            "response was available for scanning."
+            "No successful Active "
+            "dossier response was "
+            "available for scanning."
         )
 
     else:
@@ -2108,9 +2367,9 @@ if run_button:
             "published_name_count"
         ]:
             st.success(
-                "One or more legal-entity names "
-                "are explicitly published in the "
-                "ECHA dossier."
+                "One or more legal-entity "
+                "names are explicitly published "
+                "in the ECHA dossier."
             )
 
         elif active_scan[
@@ -2118,19 +2377,22 @@ if run_button:
         ]:
             st.info(
                 "ECHA marks the legal-entity "
-                "identity as Not publishable for "
-                "one or more dossiers. V9 does not "
-                "attempt to infer or reconstruct "
-                "hidden names."
+                "identity as Not publishable "
+                "for one or more dossiers. "
+                "V10 does not attempt to infer "
+                "or reconstruct hidden names."
             )
 
         else:
             st.warning(
-                "No public legal-entity name "
-                "was found in the selected "
-                "dossier documents."
+                "No public legal-entity "
+                "name was found in the "
+                "published dossier documents."
             )
 
+        # ----------------------------------
+        # MAIN RESULT TABLE
+        # ----------------------------------
         display_columns = [
             "registration_number",
             "registration_status",
@@ -2141,6 +2403,7 @@ if run_button:
             "legal_entity_status",
             "legal_entity_name",
             "document_label",
+            "documents_checked",
             "index_status",
             "document_status",
             "error",
@@ -2148,11 +2411,15 @@ if run_button:
 
         results_dataframe = (
             pd.DataFrame(
-                active_scan["results"]
+                active_scan[
+                    "results"
+                ]
             )
         )
 
-        if not results_dataframe.empty:
+        if not (
+            results_dataframe.empty
+        ):
             st.dataframe(
                 results_dataframe[
                     display_columns
@@ -2161,9 +2428,13 @@ if run_button:
                 hide_index=True,
             )
 
+        # ----------------------------------
+        # PUBLISHED NAMES
+        # ----------------------------------
         published_rows = [
             row
-            for row in active_scan[
+            for row
+            in active_scan[
                 "results"
             ]
             if (
@@ -2176,7 +2447,8 @@ if run_button:
 
         if published_rows:
             st.markdown(
-                "### Published legal-entity names"
+                "### Published "
+                "legal-entity names"
             )
 
             published_dataframe = (
@@ -2198,13 +2470,19 @@ if run_button:
                                     "legal_entity_field"
                                 ]
                             ),
+                            "document_label": (
+                                row[
+                                    "document_label"
+                                ]
+                            ),
                             "source_url": (
                                 row[
                                     "document_url"
                                 ]
                             ),
                         }
-                        for row in published_rows
+                        for row
+                        in published_rows
                     ]
                 )
             )
@@ -2215,6 +2493,9 @@ if run_button:
                 hide_index=True,
             )
 
+        # ----------------------------------
+        # DETAILED EVIDENCE
+        # ----------------------------------
         with st.expander(
             "Detailed scan evidence",
             expanded=False,
@@ -2232,7 +2513,20 @@ if run_button:
                         ]
                     ),
                     "evidence": (
-                        row["evidence"]
+                        row[
+                            "evidence"
+                        ]
+                    ),
+                    "document_label": (
+                        row[
+                            "document_label"
+                        ]
+                    ),
+                    "documents_checked": (
+                        row.get(
+                            "documents_checked",
+                            0,
+                        )
                     ),
                     "asset_external_id": (
                         row[
@@ -2245,10 +2539,13 @@ if run_button:
                         ]
                     ),
                     "error": (
-                        row["error"]
+                        row[
+                            "error"
+                        ]
                     ),
                 }
-                for row in active_scan[
+                for row
+                in active_scan[
                     "results"
                 ]
             ]
