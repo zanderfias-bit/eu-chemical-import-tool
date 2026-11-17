@@ -1,781 +1,992 @@
+import glob
 import json
-import re
-from pathlib import Path
+import os
+from typing import Any, Optional
 
 import pandas as pd
 import requests
 import streamlit as st
 
 
-# --------------------------------------------------
-# PAGE CONFIG
-# --------------------------------------------------
-st.set_page_config(
-    page_title="ECHA REST API Test",
-    page_icon="🧪",
-    layout="wide",
-)
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
+APP_VERSION = "ECHA_REST_API_TEST_V2"
 
-# --------------------------------------------------
-# VERSION
-# --------------------------------------------------
-CODE_VERSION = "ECHA_REST_API_TEST_V1"
-
-
-# --------------------------------------------------
-# PATHS
-# --------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-ECHA_DATA_FILE = (
-    BASE_DIR
-    / "data"
-    / "reach_registrations.xlsx"
-)
-
-ECHA_SHEET_NAME = "Substances list"
-
-
-# --------------------------------------------------
-# EXCEL COLUMNS
-# --------------------------------------------------
-NAME_COLUMN = "Name"
-EC_COLUMN = "EC Number"
-CAS_COLUMN = "CAS Number"
-URL_COLUMN = "Link to substance's overview page"
-
-
-# --------------------------------------------------
-# ECHA API
-# --------------------------------------------------
 ECHA_BASE_URL = "https://chem.echa.europa.eu"
 
-SUBSTANCE_ENDPOINT = (
+# Working substance endpoint from the previous successful test
+ECHA_SUBSTANCE_URL = (
     ECHA_BASE_URL
-    + "/api-substance/v1/substance/{rml_id}"
+    + "/api-substance-regulatory-context/v1/substance"
 )
 
-DOSSIER_ENDPOINT = (
+# REACH dossier-list endpoint
+ECHA_DOSSIER_URL = (
     ECHA_BASE_URL
     + "/api-dossier-list/v1/dossier"
 )
 
-
-# --------------------------------------------------
-# REQUEST CONFIGURATION
-# --------------------------------------------------
-CONNECT_TIMEOUT_SECONDS = 30
-READ_TIMEOUT_SECONDS = 90
-
-REQUEST_HEADERS = {
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/131.0.0.0 Safari/537.36"
-    ),
-}
+REQUEST_TIMEOUT = 30
 
 
-# --------------------------------------------------
-# TEXT NORMALISATION
-# --------------------------------------------------
-def normalise_text(value):
+# ============================================================
+# STREAMLIT
+# ============================================================
+
+st.set_page_config(
+    page_title="ECHA API Test",
+    page_icon="🧪",
+    layout="wide",
+)
+
+st.title("ECHA API Test")
+st.subheader("ECHA REST API diagnostic")
+
+st.caption(f"Version: {APP_VERSION}")
+
+st.write(
+    "This test uses the local ECHA registrations export to resolve "
+    "a CAS number to an ECHA rmlId, then queries the substance and "
+    "dossier REST endpoints in real time."
+)
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def normalize_column_name(value: Any) -> str:
+    """
+    Normalize a DataFrame column name for flexible matching.
+    """
+    return (
+        str(value)
+        .strip()
+        .lower()
+        .replace("_", "")
+        .replace("-", "")
+        .replace(" ", "")
+        .replace(".", "")
+    )
+
+
+def normalize_value(value: Any) -> str:
+    """
+    Convert an Excel/CSV value into a clean string.
+    """
     if value is None:
         return ""
 
-    value = str(value).strip()
+    try:
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
 
-    if value.lower() in {
-        "",
-        "nan",
-        "none",
-    }:
-        return ""
+    text = str(value).strip()
 
-    if value == "-":
-        return ""
+    # Excel can occasionally convert integer-like values to 123.0
+    if text.endswith(".0"):
+        left = text[:-2]
+        if left.isdigit():
+            return left
 
-    return " ".join(
-        value.replace("\xa0", " ").split()
-    ).strip()
-
-
-# --------------------------------------------------
-# CAS FORMAT VALIDATION
-# --------------------------------------------------
-def looks_like_cas_number(value):
-    value = normalise_text(value)
-
-    return bool(
-        re.fullmatch(
-            r"\d{2,7}-\d{2}-\d",
-            value,
-        )
-    )
+    return text
 
 
-# --------------------------------------------------
-# EXTRACT ECHA RML ID
-# --------------------------------------------------
-def extract_rml_id(echa_url):
+def find_column(
+    dataframe: pd.DataFrame,
+    candidates: list[str],
+) -> Optional[str]:
     """
-    Extract an ECHA substance identifier such as
-    100.000.002 from an ECHA overview URL.
+    Find a column using a number of possible names.
+    """
+    normalized_columns = {
+        normalize_column_name(column): column
+        for column in dataframe.columns
+    }
+
+    for candidate in candidates:
+        normalized_candidate = normalize_column_name(candidate)
+
+        if normalized_candidate in normalized_columns:
+            return normalized_columns[normalized_candidate]
+
+    return None
+
+
+def locate_local_export() -> Optional[str]:
+    """
+    Locate a likely ECHA registrations export in the project directory.
     """
 
-    echa_url = normalise_text(
-        echa_url
+    preferred_names = [
+        "echa_registrations.xlsx",
+        "echa_registration.xlsx",
+        "reach_registrations.xlsx",
+        "reach_registration.xlsx",
+        "echa_registrations.csv",
+        "reach_registrations.csv",
+    ]
+
+    for filename in preferred_names:
+        if os.path.exists(filename):
+            return filename
+
+    candidates = []
+
+    for pattern in ("*.xlsx", "*.xls", "*.csv"):
+        candidates.extend(glob.glob(pattern))
+
+    # Ignore temporary Excel lock files
+    candidates = [
+        path
+        for path in candidates
+        if not os.path.basename(path).startswith("~$")
+    ]
+
+    # Prefer filenames containing ECHA / REACH / registration
+    scored = []
+
+    for path in candidates:
+        name = os.path.basename(path).lower()
+
+        score = 0
+
+        if "echa" in name:
+            score += 5
+
+        if "reach" in name:
+            score += 4
+
+        if "registration" in name:
+            score += 3
+
+        if "substance" in name:
+            score += 1
+
+        scored.append((score, path))
+
+    if not scored:
+        return None
+
+    scored.sort(
+        key=lambda item: (
+            item[0],
+            item[1],
+        ),
+        reverse=True,
     )
 
-    match = re.search(
-        r"/(\d{3}\.\d{3}\.\d{3})(?:/|$)",
-        echa_url,
-    )
-
-    if not match:
-        return ""
-
-    return match.group(1)
+    return scored[0][1]
 
 
-# --------------------------------------------------
-# LOAD ECHA EXCEL DATA
-# --------------------------------------------------
 @st.cache_data(show_spinner=False)
-def load_echa_data():
-    if not ECHA_DATA_FILE.exists():
-        raise FileNotFoundError(
-            "The ECHA Excel file was not found at: "
-            f"{ECHA_DATA_FILE}"
+def load_local_export(path: str) -> pd.DataFrame:
+    """
+    Load the local Excel or CSV export.
+    """
+
+    extension = os.path.splitext(path)[1].lower()
+
+    if extension == ".csv":
+
+        # First try automatic separator detection
+        try:
+            return pd.read_csv(
+                path,
+                sep=None,
+                engine="python",
+                dtype=str,
+            )
+        except Exception:
+            return pd.read_csv(
+                path,
+                dtype=str,
+            )
+
+    if extension in (".xlsx", ".xls"):
+        return pd.read_excel(
+            path,
+            dtype=str,
         )
 
-    dataframe = pd.read_excel(
-        ECHA_DATA_FILE,
-        sheet_name=ECHA_SHEET_NAME,
-        dtype=str,
-        keep_default_na=False,
-        engine="openpyxl",
+    raise ValueError(
+        f"Unsupported local export format: {extension}"
     )
 
-    required_columns = [
-        NAME_COLUMN,
-        EC_COLUMN,
-        CAS_COLUMN,
-        URL_COLUMN,
-    ]
 
-    missing_columns = [
-        column
-        for column in required_columns
-        if column not in dataframe.columns
-    ]
+def find_local_substance(
+    dataframe: pd.DataFrame,
+    cas_number: str,
+) -> dict[str, str]:
+    """
+    Find CAS -> EC number -> ECHA rmlId in the local export.
+    """
 
-    if missing_columns:
-        raise RuntimeError(
-            "The ECHA Excel file is missing these columns: "
-            + ", ".join(missing_columns)
+    cas_column = find_column(
+        dataframe,
+        [
+            "CAS number",
+            "CAS Number",
+            "CAS",
+            "CASNUMBER",
+            "casNumber",
+            "rmlCas",
+        ],
+    )
+
+    ec_column = find_column(
+        dataframe,
+        [
+            "EC number",
+            "EC Number",
+            "EC",
+            "ECNUMBER",
+            "ecNumber",
+            "rmlEc",
+        ],
+    )
+
+    rml_column = find_column(
+        dataframe,
+        [
+            "rmlId",
+            "RML ID",
+            "RMLID",
+            "RML Id",
+            "ECHA rmlId",
+            "substanceId",
+        ],
+    )
+
+    name_column = find_column(
+        dataframe,
+        [
+            "Name",
+            "Substance name",
+            "Substance Name",
+            "rmlName",
+            "Chemical name",
+            "Chemical Name",
+        ],
+    )
+
+    if cas_column is None:
+        raise ValueError(
+            "No CAS-number column could be found in the local export."
         )
 
-    dataframe[CAS_COLUMN] = (
-        dataframe[CAS_COLUMN]
+    if rml_column is None:
+        raise ValueError(
+            "No rmlId column could be found in the local export."
+        )
+
+    normalized_cas = cas_number.strip()
+
+    mask = (
+        dataframe[cas_column]
+        .fillna("")
         .astype(str)
-        .map(normalise_text)
+        .str.strip()
+        .eq(normalized_cas)
     )
 
-    return dataframe
+    matches = dataframe.loc[mask]
 
-
-# --------------------------------------------------
-# FIND SUBSTANCE IN LOCAL ECHA INDEX
-# --------------------------------------------------
-def find_substance_by_cas(
-    dataframe,
-    cas_number,
-):
-    cas_number = normalise_text(
-        cas_number
-    )
-
-    matches = dataframe[
-        dataframe[CAS_COLUMN] == cas_number
-    ]
-
-    results = []
-
-    for _, row in matches.iterrows():
-        echa_url = normalise_text(
-            row[URL_COLUMN]
+    if matches.empty:
+        raise LookupError(
+            f"CAS number {normalized_cas} was not found "
+            "in the local ECHA export."
         )
 
-        results.append(
-            {
-                "name": normalise_text(
-                    row[NAME_COLUMN]
-                ),
-                "ec_number": normalise_text(
-                    row[EC_COLUMN]
-                ),
-                "cas_number": normalise_text(
-                    row[CAS_COLUMN]
-                ),
-                "echa_url": echa_url,
-                "rml_id": extract_rml_id(
-                    echa_url
-                ),
-            }
-        )
+    row = matches.iloc[0]
 
-    return results
-
-
-# --------------------------------------------------
-# CREATE HTTP SESSION
-# --------------------------------------------------
-def create_http_session():
-    session = requests.Session()
-
-    session.headers.update(
-        REQUEST_HEADERS
-    )
-
-    return session
-
-
-# --------------------------------------------------
-# EXECUTE ECHA GET REQUEST
-# --------------------------------------------------
-def execute_echa_request(
-    session,
-    url,
-    params=None,
-):
-    print(
-        f"ECHA REST GET: {url}",
-        flush=True,
-    )
-
-    if params:
-        print(
-            f"ECHA REST PARAMS: {params}",
-            flush=True,
-        )
-
-    try:
-        response = session.get(
-            url,
-            params=params,
-            timeout=(
-                CONNECT_TIMEOUT_SECONDS,
-                READ_TIMEOUT_SECONDS,
-            ),
-            allow_redirects=True,
-        )
-
-    except requests.Timeout as error:
-        raise RuntimeError(
-            "The ECHA REST request timed out: "
-            f"{error}"
-        ) from error
-
-    except requests.RequestException as error:
-        raise RuntimeError(
-            "The ECHA REST request failed: "
-            f"{error}"
-        ) from error
-
-    print(
-        f"ECHA REST FINAL URL: {response.url}",
-        flush=True,
-    )
-
-    print(
-        f"ECHA REST STATUS: {response.status_code}",
-        flush=True,
-    )
-
-    print(
-        "ECHA REST CONTENT TYPE: "
-        f"{response.headers.get('content-type', '')}",
-        flush=True,
-    )
-
-    preview = response.text[:1000]
-
-    print(
-        f"ECHA REST BODY PREVIEW: {preview}",
-        flush=True,
-    )
-
-    return response
-
-
-# --------------------------------------------------
-# PARSE JSON RESPONSE
-# --------------------------------------------------
-def parse_json_response(
-    response,
-    description,
-):
-    content_type = (
-        response.headers
-        .get("content-type", "")
-        .lower()
-    )
-
-    if response.status_code >= 400:
-        raise RuntimeError(
-            f"{description} returned HTTP "
-            f"{response.status_code}. "
-            f"Response: {response.text[:1000]}"
-        )
-
-    if (
-        "application/json" not in content_type
-        and not response.text.lstrip().startswith(
-            ("{", "[")
-        )
-    ):
-        raise RuntimeError(
-            f"{description} did not return JSON. "
-            f"Content-Type: {content_type}. "
-            f"Response: {response.text[:1000]}"
-        )
-
-    try:
-        return response.json()
-
-    except ValueError as error:
-        raise RuntimeError(
-            f"{description} returned invalid JSON. "
-            f"Response: {response.text[:1000]}"
-        ) from error
-
-
-# --------------------------------------------------
-# GET SUBSTANCE IDENTITY
-# --------------------------------------------------
-def get_substance_identity(
-    session,
-    rml_id,
-):
-    endpoint = SUBSTANCE_ENDPOINT.format(
-        rml_id=rml_id
-    )
-
-    response = execute_echa_request(
-        session=session,
-        url=endpoint,
-    )
-
-    return {
-        "status_code": response.status_code,
-        "url": response.url,
-        "body": parse_json_response(
-            response,
-            "ECHA substance endpoint",
+    result = {
+        "cas": normalized_cas,
+        "ec": (
+            normalize_value(row[ec_column])
+            if ec_column is not None
+            else ""
+        ),
+        "rml_id": normalize_value(row[rml_column]),
+        "name": (
+            normalize_value(row[name_column])
+            if name_column is not None
+            else ""
         ),
     }
 
+    if not result["rml_id"]:
+        raise ValueError(
+            f"CAS {normalized_cas} was found, "
+            "but the rmlId is empty."
+        )
 
-# --------------------------------------------------
-# GET REACH DOSSIERS
-# --------------------------------------------------
-def get_reach_dossiers(
-    session,
-    rml_id,
-    registration_status=None,
-):
+    return result
+
+
+def build_headers(
+    rml_id: Optional[str] = None,
+) -> dict[str, str]:
+    """
+    Headers used for ECHA CHEM REST requests.
+    """
+
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": (
+            "Mozilla/5.0 "
+            "(Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/131.0 Safari/537.36"
+        ),
+    }
+
+    if rml_id:
+        headers["Referer"] = (
+            f"{ECHA_BASE_URL}/{rml_id}/overview"
+        )
+
+    return headers
+
+
+def parse_response(
+    response: requests.Response,
+) -> dict[str, Any]:
+    """
+    Safely parse an ECHA HTTP response.
+    """
+
+    result = {
+        "status_code": response.status_code,
+        "request_url": response.url,
+    }
+
+    try:
+        result["data"] = response.json()
+
+    except ValueError:
+        result["data"] = None
+        result["text"] = response.text[:10000]
+
+    return result
+
+
+# ============================================================
+# SUBSTANCE API
+# ============================================================
+
+def get_echa_substance(
+    rml_id: str,
+) -> dict[str, Any]:
+    """
+    Query the ECHA CHEM substance endpoint.
+
+    The successful previous diagnostic demonstrated that the
+    substance endpoint can resolve the supplied rmlId.
+    """
+
+    rml_id = str(rml_id).strip()
+
+    if not rml_id:
+        raise ValueError("rmlId is empty.")
+
+    # Keep this isolated so changing the dossier parameters
+    # cannot break the already-working substance lookup.
+    candidate_parameter_sets = [
+        {
+            "rmlId": rml_id,
+        },
+    ]
+
+    last_result = None
+
+    for params in candidate_parameter_sets:
+
+        response = requests.get(
+            ECHA_SUBSTANCE_URL,
+            params=params,
+            headers=build_headers(rml_id),
+            timeout=REQUEST_TIMEOUT,
+        )
+
+        result = parse_response(response)
+
+        result["request_params"] = params
+
+        last_result = result
+
+        if response.status_code == 200:
+            return result
+
+    return last_result
+
+
+# ============================================================
+# DOSSIER API
+# ============================================================
+
+def get_echa_dossiers(
+    rml_id: str,
+    registration_status: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Retrieve REACH dossiers for an ECHA rmlId.
+
+    registration_status:
+        None       -> no status filter
+        Active     -> active registrations
+        Inactive   -> inactive registrations
+    """
+
+    rml_id = str(rml_id).strip()
+
+    if not rml_id:
+        raise ValueError("rmlId is empty.")
+
+    #
+    # IMPORTANT
+    #
+    # All required parameters are created in ONE dictionary.
+    #
+    # This prevents a later assignment such as:
+    #
+    # params = {"legislation": "..."}
+    #
+    # from accidentally deleting rmlId.
+    #
+
     params = {
+        "rmlId": rml_id,
+        "legislation": "REACH",
         "pageIndex": 1,
         "pageSize": 100,
-        "rmlID" : "100.004.49",
-        "legislation" : "...",
-        # eventueel registrationStatus
     }
 
     if registration_status:
-        params["registrationStatuses"] = (
-            registration_status
-        )
+        params["registrationStatuses"] = registration_status
 
-    response = execute_echa_request(
-        session=session,
-        url=DOSSIER_ENDPOINT,
+    response = requests.get(
+        ECHA_DOSSIER_URL,
         params=params,
+        headers=build_headers(rml_id),
+        timeout=REQUEST_TIMEOUT,
     )
 
-    return {
-        "status_code": response.status_code,
-        "url": response.url,
-        "body": parse_json_response(
-            response,
-            "ECHA dossier endpoint",
-        ),
-    }
+    result = parse_response(response)
+
+    result["request_params"] = params
+    result["registration_status"] = registration_status
+
+    return result
 
 
-# --------------------------------------------------
-# EXTRACT ITEMS FROM API RESULT
-# --------------------------------------------------
-def extract_items(api_body):
-    if isinstance(api_body, list):
-        return api_body
+# ============================================================
+# CLEAN DISPLAY
+# ============================================================
 
-    if not isinstance(api_body, dict):
+def clean_substance_for_display(
+    data: Any,
+) -> Any:
+    """
+    Remove very large fields such as img64 from the diagnostic output.
+    """
+
+    if not isinstance(data, dict):
+        return data
+
+    cleaned = data.copy()
+
+    cleaned.pop("img64", None)
+
+    return cleaned
+
+
+def extract_dossier_items(
+    data: Any,
+) -> list[dict[str, Any]]:
+    """
+    Extract dossier items from common ECHA response structures.
+    """
+
+    if isinstance(data, list):
+        return [
+            item
+            for item in data
+            if isinstance(item, dict)
+        ]
+
+    if not isinstance(data, dict):
         return []
 
-    for key in (
-        "items",
-        "content",
-        "results",
-        "data",
-    ):
-        value = api_body.get(
-            key
-        )
+    items = data.get("items")
 
-        if isinstance(value, list):
-            return value
+    if isinstance(items, list):
+        return [
+            item
+            for item in items
+            if isinstance(item, dict)
+        ]
+
+    content = data.get("content")
+
+    if isinstance(content, list):
+        return [
+            item
+            for item in content
+            if isinstance(item, dict)
+        ]
+
+    results = data.get("results")
+
+    if isinstance(results, list):
+        return [
+            item
+            for item in results
+            if isinstance(item, dict)
+        ]
 
     return []
 
 
-# --------------------------------------------------
-# MAIN TEST
-# --------------------------------------------------
-def run_test(cas_number):
-    print(
-        f"ECHA code version: {CODE_VERSION}",
-        flush=True,
-    )
+def dossier_summary(
+    items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Produce a compact dossier diagnostic summary while retaining
+    the identifiers needed for the next development step.
+    """
 
-    print(
-        f"ECHA API test started for CAS "
-        f"{cas_number}",
-        flush=True,
-    )
+    summaries = []
 
-    dataframe = load_echa_data()
+    interesting_fields = [
+        "assetExternalId",
+        "dossierId",
+        "uuid",
+        "id",
+        "registrationStatus",
+        "status",
+        "registrationType",
+        "submissionType",
+        "tonnageBand",
+        "jointSubmission",
+        "leadRegistrant",
+        "registrant",
+        "legalEntity",
+        "companyName",
+    ]
 
-    local_results = find_substance_by_cas(
-        dataframe=dataframe,
-        cas_number=cas_number,
-    )
+    for index, item in enumerate(items, start=1):
 
-    if not local_results:
-        raise RuntimeError(
-            f"CAS {cas_number} was not found in "
-            "reach_registrations.xlsx."
-        )
+        row = {
+            "item": index,
+        }
 
-    selected = local_results[0]
+        for field in interesting_fields:
+            if field in item:
+                row[field] = item[field]
 
-    if not selected["rml_id"]:
-        raise RuntimeError(
-            "The ECHA rmlId could not be extracted "
-            f"from this URL: {selected['echa_url']}"
-        )
+        # If none of the expected identifiers are present,
+        # show the complete item during diagnostics.
+        if len(row) == 1:
+            row["raw"] = item
 
-    print(
-        f"ECHA local match: {selected}",
-        flush=True,
-    )
+        summaries.append(row)
 
-    session = create_http_session()
-
-    substance_result = None
-    substance_error = None
-
-    try:
-        substance_result = get_substance_identity(
-            session=session,
-            rml_id=selected["rml_id"],
-        )
-
-    except Exception as error:
-        substance_error = str(
-            error
-        )
-
-        print(
-            f"ECHA substance endpoint error: "
-            f"{error}",
-            flush=True,
-        )
-
-    dossier_attempts = []
-
-    # First test without a registration-status filter.
-    # If ECHA rejects or returns nothing, also test
-    # the Active and Inactive filters separately.
-    for status in (
-        None,
-        "Active",
-        "Inactive",
-    ):
-        try:
-            result = get_reach_dossiers(
-                session=session,
-                rml_id=selected["rml_id"],
-                registration_status=status,
-            )
-
-            items = extract_items(
-                result["body"]
-            )
-
-            dossier_attempts.append(
-                {
-                    "registration_status": (
-                        status or "No filter"
-                    ),
-                    "success": True,
-                    "status_code": (
-                        result["status_code"]
-                    ),
-                    "url": result["url"],
-                    "item_count": len(items),
-                    "items": items,
-                    "raw_body": result["body"],
-                    "error": None,
-                }
-            )
-
-        except Exception as error:
-            dossier_attempts.append(
-                {
-                    "registration_status": (
-                        status or "No filter"
-                    ),
-                    "success": False,
-                    "status_code": None,
-                    "url": None,
-                    "item_count": 0,
-                    "items": [],
-                    "raw_body": None,
-                    "error": str(error),
-                }
-            )
-
-            print(
-                "ECHA dossier endpoint error "
-                f"for status {status}: {error}",
-                flush=True,
-            )
-
-    return {
-        "version": CODE_VERSION,
-        "local_substance": selected,
-        "substance_result": (
-            substance_result
-        ),
-        "substance_error": (
-            substance_error
-        ),
-        "dossier_attempts": (
-            dossier_attempts
-        ),
-    }
+    return summaries
 
 
-# --------------------------------------------------
-# STREAMLIT UI
-# --------------------------------------------------
-st.title("ECHA REST API diagnostic")
-
-st.caption(
-    f"Version: {CODE_VERSION}"
-)
-
-st.write(
-    "This test uses the local ECHA registrations export "
-    "to resolve a CAS number to an ECHA rmlId, then queries "
-    "the substance and dossier REST endpoints in real time."
-)
+# ============================================================
+# USER INPUT
+# ============================================================
 
 cas_number = st.text_input(
     "CAS number",
     value="128-37-0",
-    placeholder="For example: 128-37-0",
-)
+    placeholder="e.g. 128-37-0",
+).strip()
 
-run_button = st.button(
-    "Run ECHA API test",
-    type="primary",
-)
 
-if run_button:
-    cleaned_cas = normalise_text(
-        cas_number
-    )
+# ============================================================
+# RUN TEST
+# ============================================================
 
-    if not looks_like_cas_number(
-        cleaned_cas
-    ):
-        st.error(
-            "Enter a valid CAS number, for example "
-            "128-37-0."
+if cas_number:
+
+    try:
+
+        # --------------------------------------------------------
+        # LOCAL LOOKUP
+        # --------------------------------------------------------
+
+        export_path = locate_local_export()
+
+        if export_path is None:
+            st.error(
+                "No local ECHA registrations Excel/CSV export "
+                "could be found in the app directory."
+            )
+            st.stop()
+
+        local_data = load_local_export(export_path)
+
+        substance = find_local_substance(
+            local_data,
+            cas_number,
         )
 
-    else:
-        with st.spinner(
-            "Testing the ECHA REST endpoints..."
-        ):
-            try:
-                test_result = run_test(
-                    cleaned_cas
+        rml_id = substance["rml_id"]
+
+        st.success("ECHA API test completed.")
+
+        st.subheader("1. Local substance match")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric(
+                "CAS number",
+                substance["cas"],
+            )
+
+        with col2:
+            st.metric(
+                "EC number",
+                substance["ec"] or "Unknown",
+            )
+
+        with col3:
+            st.metric(
+                "ECHA rmlId",
+                rml_id,
+            )
+
+        if substance["name"]:
+            st.write(
+                f"**Name:** {substance['name']}"
+            )
+
+        echa_overview_url = (
+            f"{ECHA_BASE_URL}/{rml_id}/overview"
+        )
+
+        st.write(
+            f"**ECHA URL:** {echa_overview_url}"
+        )
+
+
+        # --------------------------------------------------------
+        # SUBSTANCE API
+        # --------------------------------------------------------
+
+        st.subheader("2. Substance API")
+
+        try:
+
+            substance_result = get_echa_substance(
+                rml_id
+            )
+
+            substance_status = (
+                substance_result["status_code"]
+            )
+
+            if substance_status == 200:
+
+                st.success(
+                    "The substance endpoint returned HTTP 200."
                 )
 
-            except Exception as error:
-                st.error(
-                    f"ECHA API test failed: {error}"
+                substance_data = (
+                    substance_result.get("data")
                 )
 
-                print(
-                    f"ECHA API test failed: {error}",
-                    flush=True,
+                cleaned_substance = (
+                    clean_substance_for_display(
+                        substance_data
+                    )
                 )
+
+                # Small useful summary first
+                if isinstance(substance_data, dict):
+
+                    s1, s2, s3 = st.columns(3)
+
+                    with s1:
+                        st.metric(
+                            "REACH status",
+                            (
+                                "Registered"
+                                if "REACH REGISTERED"
+                                in substance_data.get(
+                                    "listParticipation",
+                                    [],
+                                )
+                                else "Not confirmed"
+                            ),
+                        )
+
+                    with s2:
+                        st.metric(
+                            "Tonnage band",
+                            substance_data.get(
+                                "tonnageBand"
+                            )
+                            or "Unknown",
+                        )
+
+                    with s3:
+                        st.metric(
+                            "rmlId",
+                            substance_data.get(
+                                "rmlId"
+                            )
+                            or rml_id,
+                        )
+
+                with st.expander(
+                    "Substance API response",
+                    expanded=False,
+                ):
+                    st.json(cleaned_substance)
 
             else:
-                st.success(
-                    "ECHA API test completed."
+
+                st.error(
+                    "ECHA substance endpoint returned "
+                    f"HTTP {substance_status}."
                 )
 
-                substance = test_result[
-                    "local_substance"
-                ]
-
-                st.subheader(
-                    "1. Local substance match"
+                st.write("Parameters sent:")
+                st.json(
+                    substance_result.get(
+                        "request_params",
+                        {},
+                    )
                 )
 
-                col1, col2, col3 = st.columns(
-                    3
-                )
-
-                col1.metric(
-                    "CAS number",
-                    substance["cas_number"],
-                )
-
-                col2.metric(
-                    "EC number",
-                    (
-                        substance["ec_number"]
-                        or "Not available"
-                    ),
-                )
-
-                col3.metric(
-                    "ECHA rmlId",
-                    substance["rml_id"],
-                )
-
-                st.write(
-                    f"**Name:** {substance['name']}"
-                )
-
-                st.write(
-                    f"**ECHA URL:** "
-                    f"{substance['echa_url']}"
-                )
-
-                st.subheader(
-                    "2. Substance API"
-                )
-
-                if test_result[
-                    "substance_result"
-                ]:
-                    substance_api = (
-                        test_result[
-                            "substance_result"
-                        ]
+                if (
+                    substance_result.get("data")
+                    is not None
+                ):
+                    st.json(
+                        substance_result["data"]
+                    )
+                else:
+                    st.code(
+                        substance_result.get(
+                            "text",
+                            "No response body.",
+                        )
                     )
 
-                    st.success(
-                        "The substance endpoint "
-                        f"returned HTTP "
-                        f"{substance_api['status_code']}."
+        except requests.RequestException as exc:
+
+            st.error(
+                "ECHA substance request failed: "
+                f"{exc}"
+            )
+
+
+        # --------------------------------------------------------
+        # DOSSIER API
+        # --------------------------------------------------------
+
+        st.subheader("3. REACH dossier API")
+
+        status_tests = [
+            ("No filter", None),
+            ("Active", "Active"),
+            ("Inactive", "Inactive"),
+        ]
+
+        for label, registration_status in status_tests:
+
+            with st.expander(
+                f"Registration status: {label}",
+                expanded=(
+                    registration_status == "Active"
+                ),
+            ):
+
+                try:
+
+                    dossier_result = get_echa_dossiers(
+                        rml_id=rml_id,
+                        registration_status=(
+                            registration_status
+                        ),
+                    )
+
+                    st.caption(
+                        "Request parameters actually sent "
+                        "to ECHA"
                     )
 
                     st.json(
-                        substance_api["body"]
-                    )
-
-                else:
-                    st.error(
-                        test_result[
-                            "substance_error"
+                        dossier_result[
+                            "request_params"
                         ]
-                        or
-                        "The substance endpoint failed."
                     )
 
-                st.subheader(
-                    "3. REACH dossier API"
-                )
+                    st.caption("Final request URL")
+                    st.code(
+                        dossier_result["request_url"]
+                    )
 
-                successful_dossier_call = False
+                    dossier_status = (
+                        dossier_result["status_code"]
+                    )
 
-                for attempt in test_result[
-                    "dossier_attempts"
-                ]:
-                    with st.expander(
-                        (
-                            "Registration status: "
-                            f"{attempt['registration_status']}"
-                        ),
-                        expanded=(
-                            attempt["success"]
-                            and attempt["item_count"] > 0
-                        ),
-                    ):
-                        if attempt["success"]:
-                            successful_dossier_call = True
+                    if dossier_status == 200:
 
-                            st.success(
-                                "HTTP "
-                                f"{attempt['status_code']} | "
-                                f"{attempt['item_count']} "
-                                "dossier item(s)"
+                        st.success(
+                            "ECHA dossier endpoint "
+                            "returned HTTP 200."
+                        )
+
+                        dossier_data = (
+                            dossier_result.get(
+                                "data"
+                            )
+                        )
+
+                        items = extract_dossier_items(
+                            dossier_data
+                        )
+
+                        st.metric(
+                            "Dossiers returned",
+                            len(items),
+                        )
+
+                        if items:
+
+                            summaries = (
+                              s)
                             )
 
                             st.write(
-                                f"**Final API URL:** "
-                                f"{attempt['url']}"
+                                "**Dossier summary**"
                             )
 
-                            if attempt["items"]:
-                                st.dataframe(
-                                    pd.json_normalize(
-                                        attempt["items"]
-                                    ),
-                                    use_container_width=True,
-                                    hide_index=True,
+                            st.json(summaries)
+
+                            # Explicitly surface assetExternalId
+                            asset_ids = []
+
+                            for item in items:
+                                asset_id = item.get(
+                                    "assetExternalId"
                                 )
 
-                            st.markdown(
-                                "**Raw JSON response**"
+                                if asset_id:
+                                    asset_ids.append(
+                                        str(asset_id)
+                                    )
+
+                            if asset_ids:
+
+                                st.success(
+                                    "assetExternalId found."
+                                )
+
+                                for asset_id in asset_ids:
+                                    st.code(asset_id)
+
+                            else:
+
+                                st.info(
+                                    "The dossier call worked, "
+                                    "but no assetExternalId was "
+                                    "found in the returned items."
+                                )
+
+                        else:
+
+                            st.info(
+                                "The request succeeded, "
+                                "but no dossier items were "
+                                "returned for this filter."
                             )
 
+                        with st.expander(
+                            "Complete dossier API response",
+                            expanded=False,
+                        ):
+                            st.json(dossier_data)
+
+                    else:
+
+                        st.error(
+                            "ECHA dossier endpoint returned "
+                            f"HTTP {dossier_status}."
+                        )
+
+                        if (
+                            dossier_result.get("data")
+                            is not None
+                        ):
                             st.json(
-                                attempt["raw_body"]
+                                dossier_result["data"]
                             )
 
                         else:
-                            st.error(
-                                attempt["error"]
+                            st.code(
+                                dossier_result.get(
+                                    "text",
+                                    "No response body.",
+                                )
                             )
 
-                if successful_dossier_call:
-                    st.info(
-                        "The REST route is reachable. "
-                        "Inspect the returned dossier fields "
-                        "to determine whether registrant names "
-                        "are included directly or require a "
-                        "second dossier-detail endpoint."
+                except requests.RequestException as exc:
+
+                    st.error(
+                        "ECHA dossier request failed: "
+                        f"{exc}"
                     )
+
+                except Exception as exc:
+
+                    st.error(
+                        "Unexpected ECHA dossier error: "
+                        f"{exc}"
+                    )
+
+
+        # --------------------------------------------------------
+        # NEXT STEP INFO
+        # --------------------------------------------------------
+
+        st.subheader("4. Diagnostic conclusion")
+
+        st.info(
+            "If the Active dossier request returns HTTP 200, "
+            "the next step is to use the returned dossier "
+            "identifier / assetExternalId to retrieve the "
+            "published dossier information and identify the "
+            "available registrant or legal-entity information."
+        )
+
+
+    except LookupError as exc:
+
+        st.warning(str(exc))
+
+    except ValueError as exc:
+
+        st.error(str(exc))
+
+    except requests.RequestException as exc:
+
+        st.error(
+            f"Network/API error: {exc}"
+        )
+
+    except Exception as exc:
+
+        st.exception(exc)
