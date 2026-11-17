@@ -1,3 +1,4 @@
+import html
 import re
 from pathlib import Path
 
@@ -19,14 +20,12 @@ st.set_page_config(
 # --------------------------------------------------
 # VERSION
 # --------------------------------------------------
-CODE_VERSION = "ECHA_REST_API_TEST_V2"
+CODE_VERSION = "ECHA_REST_API_TEST_V3"
 
 
 # --------------------------------------------------
 # PATHS
 # --------------------------------------------------
-# 99_ECHA_API_Test.py staat in de map pages.
-# parent.parent verwijst daarom naar de projectmap.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 ECHA_DATA_FILE = (
@@ -62,6 +61,11 @@ DOSSIER_ENDPOINT = (
     + "/api-dossier-list/v1/dossier"
 )
 
+PUBLISHED_DOSSIER_ENDPOINT = (
+    ECHA_BASE_URL
+    + "/html-pages/{asset_external_id}/index.html"
+)
+
 
 # --------------------------------------------------
 # REQUEST CONFIGURATION
@@ -70,7 +74,7 @@ CONNECT_TIMEOUT_SECONDS = 30
 READ_TIMEOUT_SECONDS = 90
 
 REQUEST_HEADERS = {
-    "Accept": "application/json, text/plain, */*",
+    "Accept": "application/json, text/plain, text/html, */*",
     "Accept-Language": "en-US,en;q=0.9",
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) "
@@ -78,6 +82,25 @@ REQUEST_HEADERS = {
         "Chrome/131.0.0.0 Safari/537.36"
     ),
 }
+
+
+# --------------------------------------------------
+# DOSSIER SEARCH TERMS
+# --------------------------------------------------
+DOSSIER_SEARCH_TERMS = [
+    "Registrant",
+    "Legal entity",
+    "Company",
+    "Company name",
+    "Organisation",
+    "Organization",
+    "Manufacturer",
+    "Importer",
+    "Only representative",
+    "Third party representative",
+    "Registration holder",
+    "Applicant",
+]
 
 
 # --------------------------------------------------
@@ -248,6 +271,7 @@ def execute_echa_request(
     session,
     url,
     params=None,
+    additional_headers=None,
 ):
     print(
         f"ECHA REST GET: {url}",
@@ -260,10 +284,18 @@ def execute_echa_request(
             flush=True,
         )
 
+    request_headers = {}
+
+    if additional_headers:
+        request_headers.update(
+            additional_headers
+        )
+
     try:
         response = session.get(
             url,
             params=params,
+            headers=request_headers or None,
             timeout=(
                 CONNECT_TIMEOUT_SECONDS,
                 READ_TIMEOUT_SECONDS,
@@ -355,12 +387,6 @@ def parse_json_response(
 # REMOVE VERY LARGE FIELDS FROM DISPLAY
 # --------------------------------------------------
 def clean_substance_response(api_body):
-    """
-    Remove the large base64 molecular image from the displayed
-    Substance API response. The original API response is otherwise
-    left unchanged.
-    """
-
     if not isinstance(api_body, dict):
         return api_body
 
@@ -411,13 +437,6 @@ def get_reach_dossiers(
     rml_id,
     registration_status=None,
 ):
-    """
-    Retrieve REACH dossiers for the supplied ECHA rmlId.
-
-    All basic parameters are created in one dictionary so that adding
-    legislation or status cannot accidentally remove rmlId.
-    """
-
     rml_id = normalise_text(rml_id)
 
     if not rml_id:
@@ -476,7 +495,6 @@ def extract_items(api_body):
         if isinstance(value, list):
             return value
 
-        # Some APIs place an items/content list inside data.
         if isinstance(value, dict):
             for nested_key in (
                 "items",
@@ -518,6 +536,238 @@ def extract_asset_external_ids(items):
     return list(
         dict.fromkeys(asset_external_ids)
     )
+
+
+# --------------------------------------------------
+# SELECT FIRST ACTIVE DOSSIER
+# --------------------------------------------------
+def select_first_active_dossier(
+    dossier_attempts,
+):
+    for attempt in dossier_attempts:
+        if not attempt.get("success"):
+            continue
+
+        if (
+            attempt.get("registration_status")
+            != "Active"
+        ):
+            continue
+
+        items = attempt.get(
+            "items",
+            [],
+        )
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            asset_external_id = normalise_text(
+                item.get("assetExternalId")
+            )
+
+            if asset_external_id:
+                return item
+
+    return None
+
+
+# --------------------------------------------------
+# CONVERT HTML INTO SEARCHABLE TEXT
+# --------------------------------------------------
+def html_to_searchable_text(html_content):
+    if not html_content:
+        return ""
+
+    text = str(html_content)
+
+    # Remove scripts and styles because they cause many false matches.
+    text = re.sub(
+        r"<script\b[^>]*>.*?</script>",
+        " ",
+        text,
+        flags=(
+            re.IGNORECASE
+            | re.DOTALL
+        ),
+    )
+
+    text = re.sub(
+        r"<style\b[^>]*>.*?</style>",
+        " ",
+        text,
+        flags=(
+            re.IGNORECASE
+            | re.DOTALL
+        ),
+    )
+
+    # Add spacing around common block elements.
+    text = re.sub(
+        r"</?(?:div|p|li|tr|td|th|h[1-6]|br)\b[^>]*>",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # Remove remaining HTML tags.
+    text = re.sub(
+        r"<[^>]+>",
+        " ",
+        text,
+    )
+
+    text = html.unescape(text)
+
+    return " ".join(
+        text.replace("\xa0", " ").split()
+    )
+
+
+# --------------------------------------------------
+# FIND RELEVANT DOSSIER TEXT
+# --------------------------------------------------
+def find_dossier_text_matches(
+    searchable_text,
+    terms=None,
+    context_characters=350,
+):
+    if terms is None:
+        terms = DOSSIER_SEARCH_TERMS
+
+    matches = []
+
+    if not searchable_text:
+        return matches
+
+    for term in terms:
+        pattern = re.compile(
+            re.escape(term),
+            flags=re.IGNORECASE,
+        )
+
+        for match in pattern.finditer(
+            searchable_text
+        ):
+            start = max(
+                0,
+                match.start()
+                - context_characters,
+            )
+
+            end = min(
+                len(searchable_text),
+                match.end()
+                + context_characters,
+            )
+
+            excerpt = searchable_text[
+                start:end
+            ].strip()
+
+            matches.append(
+                {
+                    "term": term,
+                    "excerpt": excerpt,
+                }
+            )
+
+            # One useful occurrence per search term is enough
+            # during this diagnostic step.
+            break
+
+    return matches
+
+
+# --------------------------------------------------
+# GET PUBLISHED DOSSIER
+# --------------------------------------------------
+def get_published_dossier(
+    session,
+    asset_external_id,
+    rml_id=None,
+):
+    asset_external_id = normalise_text(
+        asset_external_id
+    )
+
+    if not asset_external_id:
+        raise RuntimeError(
+            "The assetExternalId is empty."
+        )
+
+    endpoint = PUBLISHED_DOSSIER_ENDPOINT.format(
+        asset_external_id=asset_external_id
+    )
+
+    referer = ECHA_BASE_URL
+
+    if rml_id:
+        referer = (
+            f"{ECHA_BASE_URL}/"
+            f"{normalise_text(rml_id)}/overview"
+        )
+
+    response = execute_echa_request(
+        session=session,
+        url=endpoint,
+        additional_headers={
+            "Accept": (
+                "text/html,application/xhtml+xml,"
+                "application/xml;q=0.9,*/*;q=0.8"
+            ),
+            "Referer": referer,
+        },
+    )
+
+    content_type = (
+        response.headers
+        .get("content-type", "")
+        .lower()
+    )
+
+    response_text = response.text
+
+    searchable_text = (
+        html_to_searchable_text(
+            response_text
+        )
+    )
+
+    term_matches = find_dossier_text_matches(
+        searchable_text
+    )
+
+    return {
+        "success": (
+            response.status_code == 200
+        ),
+        "status_code": response.status_code,
+        "url": response.url,
+        "content_type": content_type,
+        "content_length": len(
+            response.content
+        ),
+        "html_length": len(
+            response_text
+        ),
+        "searchable_text_length": len(
+            searchable_text
+        ),
+        "matches": term_matches,
+        "html_preview": response_text[:10000],
+        "text_preview": searchable_text[:5000],
+        "error": (
+            None
+            if response.status_code == 200
+            else (
+                "Published dossier endpoint returned "
+                f"HTTP {response.status_code}. "
+                f"Response: {response_text[:1000]}"
+            )
+        ),
+    }
 
 
 # --------------------------------------------------
@@ -588,6 +838,18 @@ def run_test(cas_number):
         "Active",
         "Inactive",
     ):
+        request_params = {
+            "pageIndex": 1,
+            "pageSize": 100,
+            "rmlId": selected["rml_id"],
+            "legislation": "REACH",
+        }
+
+        if status:
+            request_params[
+                "registrationStatuses"
+            ] = status
+
         try:
             result = get_reach_dossiers(
                 session=session,
@@ -635,21 +897,7 @@ def run_test(cas_number):
                     "success": False,
                     "status_code": None,
                     "url": None,
-                    "params": {
-                        "pageIndex": 1,
-                        "pageSize": 100,
-                        "rmlId": selected["rml_id"],
-                        "legislation": "REACH",
-                        **(
-                            {
-                                "registrationStatuses": (
-                                    status
-                                )
-                            }
-                            if status
-                            else {}
-                        ),
-                    },
+                    "params": request_params,
                     "item_count": 0,
                     "items": [],
                     "asset_external_ids": [],
@@ -664,12 +912,91 @@ def run_test(cas_number):
                 flush=True,
             )
 
+    # --------------------------------------------------
+    # PUBLISHED DOSSIER TEST
+    # --------------------------------------------------
+    published_dossier_test = None
+
+    first_active_dossier = (
+        select_first_active_dossier(
+            dossier_attempts
+        )
+    )
+
+    if first_active_dossier:
+        asset_external_id = normalise_text(
+            first_active_dossier.get(
+                "assetExternalId"
+            )
+        )
+
+        try:
+            published_result = (
+                get_published_dossier(
+                    session=session,
+                    asset_external_id=(
+                        asset_external_id
+                    ),
+                    rml_id=selected["rml_id"],
+                )
+            )
+
+            published_dossier_test = {
+                "dossier": (
+                    first_active_dossier
+                ),
+                "asset_external_id": (
+                    asset_external_id
+                ),
+                "registration_number": (
+                    first_active_dossier.get(
+                        "registrationNumber"
+                    )
+                ),
+                **published_result,
+            }
+
+        except Exception as error:
+            published_dossier_test = {
+                "dossier": (
+                    first_active_dossier
+                ),
+                "asset_external_id": (
+                    asset_external_id
+                ),
+                "registration_number": (
+                    first_active_dossier.get(
+                        "registrationNumber"
+                    )
+                ),
+                "success": False,
+                "status_code": None,
+                "url": None,
+                "content_type": None,
+                "content_length": 0,
+                "html_length": 0,
+                "searchable_text_length": 0,
+                "matches": [],
+                "html_preview": None,
+                "text_preview": None,
+                "error": str(error),
+            }
+
+            print(
+                "Published dossier test error: "
+                f"{error}",
+                flush=True,
+            )
+
     return {
         "version": CODE_VERSION,
         "local_substance": selected,
         "substance_result": substance_result,
         "substance_error": substance_error,
         "dossier_attempts": dossier_attempts,
+        "published_dossier_test": (
+            published_dossier_test
+        ),
     }
 
 
@@ -685,7 +1012,8 @@ st.caption(
 st.write(
     "This test uses the local ECHA registrations export "
     "to resolve a CAS number to an ECHA rmlId, then queries "
-    "the substance and dossier REST endpoints in real time."
+    "the substance, dossier-list and published-dossier "
+    "endpoints in real time."
 )
 
 st.caption(
@@ -745,7 +1073,7 @@ if run_button:
                 ]
 
                 # ------------------------------------------
-                # LOCAL RESULT
+                # 1. LOCAL RESULT
                 # ------------------------------------------
                 st.subheader(
                     "1. Local substance match"
@@ -781,7 +1109,7 @@ if run_button:
                 )
 
                 # ------------------------------------------
-                # SUBSTANCE API
+                # 2. SUBSTANCE API
                 # ------------------------------------------
                 st.subheader(
                     "2. Substance API"
@@ -869,7 +1197,7 @@ if run_button:
                     )
 
                 # ------------------------------------------
-                # DOSSIER API
+                # 3. DOSSIER API
                 # ------------------------------------------
                 st.subheader(
                     "3. REACH dossier API"
@@ -945,7 +1273,7 @@ if run_button:
                                         pd.json_normalize(
                                             attempt["items"]
                                         ),
-                                        use_container_width=True,
+                                        width="stretch",
                                         hide_index=True,
                                     )
 
@@ -974,11 +1302,167 @@ if run_button:
                                 attempt["error"]
                             )
 
+                # ------------------------------------------
+                # 4. PUBLISHED DOSSIER TEST
+                # ------------------------------------------
+                st.subheader(
+                    "4. Published dossier test"
+                )
+
+                published_test = test_result.get(
+                    "published_dossier_test"
+                )
+
+                if not published_test:
+                    st.warning(
+                        "No active dossier with an "
+                        "assetExternalId was available for "
+                        "the published-dossier test."
+                    )
+
+                else:
+                    detail_col1, detail_col2 = (
+                        st.columns(2)
+                    )
+
+                    detail_col1.metric(
+                        "assetExternalId",
+                        published_test.get(
+                            "asset_external_id"
+                        )
+                        or "Not available",
+                    )
+
+                    detail_col2.metric(
+                        "Registration number",
+                        published_test.get(
+                            "registration_number"
+                        )
+                        or "Not available",
+                    )
+
+                    st.markdown(
+                        "**Published dossier URL**"
+                    )
+
+                    if published_test.get("url"):
+                        st.code(
+                            published_test["url"],
+                            language=None,
+                        )
+
+                    if published_test.get(
+                        "success"
+                    ):
+                        st.success(
+                            "Published dossier returned "
+                            f"HTTP "
+                            f"{published_test['status_code']}."
+                        )
+
+                    else:
+                        st.error(
+                            published_test.get(
+                                "error"
+                            )
+                            or
+                            "The published dossier test failed."
+                        )
+
+                    diagnostic_col1, diagnostic_col2, diagnostic_col3 = (
+                        st.columns(3)
+                    )
+
+                    diagnostic_col1.metric(
+                        "HTTP status",
+                        (
+                            published_test.get(
+                                "status_code"
+                            )
+                            if published_test.get(
+                                "status_code"
+                            )
+                            is not None
+                            else "Unknown"
+                        ),
+                    )
+
+                    diagnostic_col2.metric(
+                        "Content type",
+                        published_test.get(
+                            "content_type"
+                        )
+                        or "Unknown",
+                    )
+
+                    diagnostic_col3.metric(
+                        "Response size",
+                        (
+                            f"{published_test.get('content_length', 0):,} bytes"
+                        ),
+                    )
+
+                    matches = published_test.get(
+                        "matches",
+                        [],
+                    )
+
+                    if matches:
+                        st.success(
+                            f"{len(matches)} relevant "
+                            "dossier term(s) found."
+                        )
+
+                        match_dataframe = pd.DataFrame(
+                            matches
+                        )
+
+                        st.dataframe(
+                            match_dataframe,
+                            width="stretch",
+                            hide_index=True,
+                        )
+
+                    else:
+                        st.info(
+                            "The published dossier response "
+                            "did not yet contain visible text "
+                            "matching Registrant, Legal entity, "
+                            "Company, Manufacturer, Importer or "
+                            "Only representative."
+                        )
+
+                    with st.expander(
+                        "Published dossier text preview",
+                        expanded=True,
+                    ):
+                        st.text(
+                            published_test.get(
+                                "text_preview"
+                            )
+                            or
+                            "No searchable text was returned."
+                        )
+
+                    with st.expander(
+                        "Published dossier raw HTML preview",
+                        expanded=False,
+                    ):
+                        st.code(
+                            published_test.get(
+                                "html_preview"
+                            )
+                            or
+                            "No HTML was returned.",
+                            language="html",
+                        )
+
                 if successful_dossier_call:
                     st.info(
-                        "The REST route is reachable. "
-                        "The next step is to inspect the "
-                        "returned dossier fields and use "
-                        "assetExternalId for the published "
-                        "dossier information."
+                        "The dossier-list route is working. "
+                        "Section 4 now tests whether the first "
+                        "active assetExternalId exposes the "
+                        "published dossier and whether registrant "
+                        "or legal-entity information is present "
+                        "in that response."
                     )
