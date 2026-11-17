@@ -23,7 +23,7 @@ st.set_page_config(
 # --------------------------------------------------
 # VERSION
 # --------------------------------------------------
-CODE_VERSION = "ECHA_REGISTRANTS_API_DISCOVERY_V8_FIX1"
+CODE_VERSION = "ECHA_REGISTRANTS_API_DISCOVERY_V8_FIX2"
 
 
 # --------------------------------------------------
@@ -158,7 +158,8 @@ class ECHAHTMLParser(HTMLParser):
 
             if (
                 "modulepreload" in rel
-                or clean_href.lower()
+                or clean_href
+                .lower()
                 .split("?")[0]
                 .endswith(".js")
             ):
@@ -215,20 +216,18 @@ def safe_get(
     url,
     referer=None,
 ):
-    request_headers = {}
-
-    if referer:
-        request_headers[
-            "Referer"
-        ] = referer
+    request_headers = (
+        {
+            "Referer": referer
+        }
+        if referer
+        else None
+    )
 
     try:
         response = session.get(
             url,
-            headers=(
-                request_headers
-                or None
-            ),
+            headers=request_headers,
             timeout=(
                 CONNECT_TIMEOUT_SECONDS,
                 READ_TIMEOUT_SECONDS,
@@ -241,15 +240,13 @@ def safe_get(
     except requests.Timeout as error:
         return (
             None,
-            "Request timed out: "
-            f"{error}",
+            f"Request timed out: {error}",
         )
 
     except requests.RequestException as error:
         return (
             None,
-            "Request failed: "
-            f"{error}",
+            f"Request failed: {error}",
         )
 
 
@@ -307,7 +304,10 @@ def looks_like_javascript(
         .lower()
     )
 
-    if "<!doctype html" in start:
+    if (
+        "<!doctype html"
+        in start
+    ):
         return False
 
     if re.search(
@@ -316,19 +316,19 @@ def looks_like_javascript(
     ):
         return False
 
-    if "javascript" in content_type:
+    if (
+        "javascript"
+        in content_type
+    ):
         return True
 
-    path = (
+    return (
         urlparse(
             response.url
         )
         .path
         .lower()
-    )
-
-    return path.endswith(
-        ".js"
+        .endswith(".js")
     )
 
 
@@ -339,8 +339,8 @@ def load_application_shell(
     session,
 ):
     response, error = safe_get(
-        session=session,
-        url=OVERVIEW_URL,
+        session,
+        OVERVIEW_URL,
     )
 
     if response is None:
@@ -394,14 +394,6 @@ def load_application_shell(
             source,
         )
 
-        if script_url in seen:
-            continue
-
-        if not is_allowed_url(
-            script_url
-        ):
-            continue
-
         path = (
             urlparse(
                 script_url
@@ -409,6 +401,14 @@ def load_application_shell(
             .path
             .lower()
         )
+
+        if script_url in seen:
+            continue
+
+        if not is_allowed_url(
+            script_url
+        ):
+            continue
 
         if not path.endswith(
             ".js"
@@ -452,53 +452,40 @@ def extract_child_scripts(
 
     candidates = []
 
-    quoted_js = re.findall(
-        r"""["']([^"']+\.js(?:\?[^"']*)?)["']""",
-        script_text,
-        flags=re.IGNORECASE,
+    candidates.extend(
+        re.findall(
+            r'''["']([^"']+\.js(?:\?[^"']*)?)["']''',
+            script_text,
+            flags=re.IGNORECASE,
+        )
     )
 
     candidates.extend(
-        quoted_js
-    )
-
-    dynamic_imports = re.findall(
-        (
-            r"""import\s*\(\s*"""
-            r"""["']([^"']+)["']"""
-            r"""\s*\)"""
-        ),
-        script_text,
-        flags=re.IGNORECASE,
+        re.findall(
+            r'''import\s*\(\s*["']([^"']+)["']\s*\)''',
+            script_text,
+            flags=re.IGNORECASE,
+        )
     )
 
     candidates.extend(
-        dynamic_imports
+        re.findall(
+            (
+                r"(?:chunk|main|runtime|polyfills)-"
+                r"[A-Za-z0-9_-]+\.js"
+            ),
+            script_text,
+            flags=re.IGNORECASE,
+        )
     )
-
-    chunk_names = re.findall(
-        (
-            r"(?:chunk|main|runtime|polyfills)-"
-            r"[A-Za-z0-9_-]+\.js"
-        ),
-        script_text,
-        flags=re.IGNORECASE,
-    )
-
-    candidates.extend(
-        chunk_names
-    )
-
     results = []
     seen = set()
 
     for candidate in candidates:
-        candidate = (
+        clean_candidate = (
             str(candidate)
             .strip()
-            .strip(
-                "\"'"
-            )
+            .strip("\"'")
             .replace(
                 "\\/",
                 "/",
@@ -513,18 +500,13 @@ def extract_child_scripts(
             )
         )
 
-        if not candidate:
+        if not clean_candidate:
             continue
 
         child_url = urljoin(
             script_url,
-            candidate,
+            clean_candidate,
         )
-
-        if not is_allowed_url(
-            child_url
-        ):
-            continue
 
         child_path = (
             urlparse(
@@ -534,12 +516,17 @@ def extract_child_scripts(
             .lower()
         )
 
-        if not child_path.endswith(
-            ".js"
+        if child_url in seen:
+            continue
+
+        if not is_allowed_url(
+            child_url
         ):
             continue
 
-        if child_url in seen:
+        if not child_path.endswith(
+            ".js"
+        ):
             continue
 
         seen.add(
@@ -674,15 +661,30 @@ def extract_config_urls(
     if not text:
         return []
 
-    candidates = []
-
     patterns = [
-        r"""["']([^"']*remoteEntry\.json[^"']*)["']""",
-        r"""["']([^"']*config[^"']*\.json[^"']*)["']""",
-        r"""["']([^"']*runtime[^"']*\.json[^"']*)["']""",
-        r"""["']([^"']*environment[^"']*\.json[^"']*)["']""",
-        r"""["']([^"']*settings[^"']*\.json[^"']*)["']""",
+        (
+            r'''[^"']*remoteEntry\.json'''
+            r'''[^"']*["']'''
+        ),
+        (
+            r'''[^"']*config[^"']*\.json'''
+            r'''[^"']*["']'''
+        ),
+        (
+            r'''[^"']*runtime[^"']*\.json'''
+            r'''[^"']*["']'''
+        ),
+        (
+            r'''[^"']*environment[^"']*\.json'''
+            r'''[^"']*["']'''
+        ),
+        (
+            r'''[^"']*settings[^"']*\.json'''
+            r'''[^"']*["']'''
+        ),
     ]
+
+    candidates = []
 
     for pattern in patterns:
         candidates.extend(
@@ -697,7 +699,7 @@ def extract_config_urls(
     seen = set()
 
     for candidate in candidates:
-        candidate = (
+        clean_candidate = (
             str(candidate)
             .strip()
             .replace(
@@ -714,20 +716,20 @@ def extract_config_urls(
             )
         )
 
-        if not candidate:
+        if not clean_candidate:
             continue
 
         url = urljoin(
             source_url,
-            candidate,
+            clean_candidate,
         )
+
+        if url in seen:
+            continue
 
         if not is_allowed_url(
             url
         ):
-            continue
-
-        if url in seen:
             continue
 
         seen.add(
@@ -748,20 +750,15 @@ def analyse_javascript_tree(
     session,
     initial_scripts,
 ):
-    pending = deque()
-
-    for script_url in initial_scripts:
-        pending.append(
-            {
-                "url": (
-                    script_url
-                ),
-                "depth": 0,
-                "parent": (
-                    OVERVIEW_URL
-                ),
-            }
-        )
+    pending = deque(
+        {
+            "url": script_url,
+            "depth": 0,
+            "parent": OVERVIEW_URL,
+        }
+        for script_url
+        in initial_scripts
+    )
 
     visited = set()
 
@@ -774,8 +771,7 @@ def analyse_javascript_tree(
     while (
         pending
         and
-        len(visited)
-        < MAX_FILES
+        len(visited) < MAX_FILES
     ):
         pending_item = (
             pending.popleft()
@@ -821,7 +817,9 @@ def analyse_javascript_tree(
                     "Child scripts": 0,
                     "Relevant contexts": 0,
                     "Config URLs": 0,
-                    "Error": error,
+                    "Error": (
+                        error
+                    ),
                 }
             )
 
@@ -840,12 +838,8 @@ def analyse_javascript_tree(
         if javascript:
             child_scripts = (
                 extract_child_scripts(
-                    script_text=(
-                        response.text
-                    ),
-                    script_url=(
-                        response.url
-                    ),
+                    response.text,
+                    response.url,
                 )
             )
 
@@ -1012,9 +1006,9 @@ def fetch_config_url(
         json_body = None
 
     contexts = find_contexts(
-        text=textl
-        ),
-    
+        text=text,
+        source=response.url,
+    )
 
     return {
         "url": (
@@ -1056,7 +1050,8 @@ def find_json_key_values(
 
     wanted_lower = {
         key.lower()
-        for key in wanted_keys
+        for key
+        in wanted_keys
     }
 
     if isinstance(
@@ -1125,19 +1120,16 @@ def find_json_key_values(
 
 
 # --------------------------------------------------
-# API BASE CANDIDATES FROM CONTEXT
+# API BASE CANDIDATES
 # --------------------------------------------------
 def extract_api_base_candidates(
     contexts,
 ):
-    candidates = []
-    seen = set()
-
     patterns = [
         (
             r"https?://"
-            r"[A-Za-z0-9._:-]+"
-            r"/[A-Za-z0-9_./-]*"
+            r"[A-Za-z0-9._:-]+/"
+            r"[A-Za-z0-9_./-]*"
             r"api-dossier-list"
             r"[A-Za-z0-9_./-]*"
         ),
@@ -1149,12 +1141,13 @@ def extract_api_base_candidates(
         ),
     ]
 
+    candidates = []
+    seen = set()
+
     for row in contexts:
-        context = (
-            row.get(
-                "context",
-                "",
-            )
+        context = row.get(
+            "context",
+            "",
         )
 
         for pattern in patterns:
@@ -1213,10 +1206,8 @@ def extract_api_base_candidates(
 def run_discovery():
     session = create_session()
 
-    shell = (
-        load_application_shell(
-            session
-        )
+    shell = load_application_shell(
+        session
     )
 
     javascript_analysis = (
@@ -1306,10 +1297,10 @@ def run_discovery():
             )
         )
 
-        for value in (
+        for found_value in (
             found_values
         ):
-            value[
+            found_value[
                 "source"
             ] = (
                 config_result[
@@ -1318,14 +1309,8 @@ def run_discovery():
             )
 
             json_config_values.append(
-                value
+                found_value
             )
-
-    api_candidates = (
-        extract_api_base_candidates(
-            all_contexts
-        )
-    )
 
     return {
         "shell": (
@@ -1344,7 +1329,9 @@ def run_discovery():
             json_config_values
         ),
         "api_candidates": (
-            api_candidates
+            extract_api_base_candidates(
+                all_contexts
+            )
         ),
     }
 
@@ -1380,24 +1367,24 @@ st.subheader(
     "Known test substance"
 )
 
-metric_columns = st.columns(
-    3
+metric_columns = (
+    st.columns(3)
 )
 
-with metric_columnsst.metric(
-        "CAS",
-        CAS_NUMBER,
-    )
+metric_columns[0].metric(
+    "CAS",
+    CAS_NUMBER,
+)
 
-with metric_columnsst.metric(
-        "EC",
-        EC_NUMBER,
-    )
+metric_columns[1].metric(
+    "EC",
+    EC_NUMBER,
+)
 
-with metric_columnsst.metric(
-        "rmlId",
-        RML_ID,
-    )
+metric_columns[2].metric(
+    "rmlId",
+    RML_ID,
+)
 
 st.write(
     "Expected ECHA CHEM benchmark: "
@@ -1448,42 +1435,42 @@ if st.button(
         "1. Application shell"
     )
 
-    shell_columns = st.columns(
-        3
+    shell_columns = (
+        st.columns(3)
     )
 
-    with shell_columnsst.metric(
-            "HTTP",
-            (
+    shell_columns[0].metric(
+        "HTTP",
+        (
+            shell[
+                "status"
+            ]
+            if (
                 shell[
                     "status"
                 ]
-                if (
-                    shell[
-                        "status"
-                    ]
-                    is not None
-                )
-                else
-                "Error"
-            ),
-        )
+                is not None
+            )
+            else
+            "Error"
+        ),
+    )
 
-    with shell_columnsst.metric(
-            "HTML bytes",
+    shell_columns[1].metric(
+        "HTML bytes",
+        shell[
+            "bytes"
+        ],
+    )
+
+    shell_columns[2].metric(
+        "Initial scripts",
+        len(
             shell[
-                "bytes"
-            ],
-        )
-
-    with shell_columnsst.metric(
-            "Initial scripts",
-            len(
-                shell[
-                    "scripts"
-                ]
-            ),
-        )
+                "scripts"
+            ]
+        ),
+    )
 
     st.write(
         "**Initial scripts:**"
@@ -1521,30 +1508,30 @@ if st.button(
         st.columns(3)
     )
 
-    with javascript_columnsst.metric(
-            "Files analysed",
-            len(
-                files
-            ),
-        )
+    javascript_columns[0].metric(
+        "Files analysed",
+        len(
+            files
+        ),
+    )
 
-    with javascript_columnsst.metric(
-            "Relevant contexts",
-            len(
-                javascript[
-                    "contexts"
-                ]
-            ),
-        )
+    javascript_columns[1].metric(
+        "Relevant contexts",
+        len(
+            javascript[
+                "contexts"
+            ]
+        ),
+    )
 
-    with javascript_columnsst.metric(
-            "Config URLs found",
-            len(
-                javascript[
-                    "config_urls"
-                ]
-            ),
-        )
+    javascript_columns[2].metric(
+        "Config URLs found",
+        len(
+            javascript[
+                "config_urls"
+            ]
+        ),
+    )
 
     if files:
         st.dataframe(
@@ -1813,35 +1800,32 @@ if st.button(
             "directly in configuration JSON."
         )
 
-        display_values = []
-
-        for value in (
-            json_config_values
-        ):
-            display_values.append(
-                {
-                    "Source": (
-                        value[
-                            "source"
-                        ]
-                    ),
-                    "Path": (
-                        value[
-                            "path"
-                        ]
-                    ),
-                    "Key": (
-                        value[
-                            "key"
-                        ]
-                    ),
-                    "Value": str(
-                        value[
-                            "value"
-                        ]
-                    ),
-                }
-            )
+        display_values = [
+            {
+                "Source": (
+                    value[
+                        "source"
+                    ]
+                ),
+                "Path": (
+                    value[
+                        "path"
+                    ]
+                ),
+                "Key": (
+                    value[
+                        "key"
+                    ]
+                ),
+                "Value": str(
+                    value[
+                        "value"
+                    ]
+                ),
+            }
+            for value
+            in json_config_values
+        ]
 
         st.dataframe(
             pd.DataFrame(
@@ -1867,7 +1851,8 @@ if st.button(
 
     json_configs = [
         config
-        for config in configs
+        for config
+        in configs
         if (
             config[
                 "json"
