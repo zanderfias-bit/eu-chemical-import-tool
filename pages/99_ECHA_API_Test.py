@@ -868,7 +868,7 @@ if cas_number:
 
                             summaries = (
                               s)
-                            )
+                            
 
                             st.write(
                                 "**Dossier summary**"
