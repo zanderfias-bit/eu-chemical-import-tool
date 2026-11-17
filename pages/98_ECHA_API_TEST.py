@@ -1,5 +1,5 @@
 import re
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import pandas as pd
 import requests
@@ -21,7 +21,7 @@ st.set_page_config(
 # --------------------------------------------------
 # VERSION
 # --------------------------------------------------
-CODE_VERSION = "ECHA_REGISTRANTS_ROUTE_DISCOVERY_V2"
+CODE_VERSION = "ECHA_REGISTRANTS_ROUTE_DISCOVERY_V3"
 
 
 # --------------------------------------------------
@@ -33,15 +33,23 @@ RML_ID = "100.004.439"
 
 ECHA_BASE_URL = "https://chem.echa.europa.eu"
 
-SUBSTANCE_OVERVIEW_URL = (
-    f"{ECHA_BASE_URL}/"
-    f"{RML_ID}/overview"
-)
 
-REACH_REGISTRATION_URLS = [
-    f"{ECHA_BASE_URL}/{RML_ID}/dossiers/reach",
-    f"{ECHA_BASE_URL}/{RML_ID}/dossiers",
-    f"{ECHA_BASE_URL}/{RML_ID}/overview",
+# --------------------------------------------------
+# PAGES TO ANALYSE
+# --------------------------------------------------
+PAGE_URLS = [
+    (
+        f"{ECHA_BASE_URL}/"
+        f"{RML_ID}/overview"
+    ),
+    (
+        f"{ECHA_BASE_URL}/"
+        f"{RML_ID}/dossiers"
+    ),
+    (
+        f"{ECHA_BASE_URL}/"
+        f"{RML_ID}/dossiers/reach"
+    ),
 ]
 
 
@@ -59,7 +67,9 @@ HEADERS = {
         "text/plain,"
         "*/*"
     ),
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Language": (
+        "en-US,en;q=0.9"
+    ),
     "User-Agent": (
         "Mozilla/5.0 (X11; Linux x86_64) "
         "AppleWebKit/537.36 "
@@ -76,11 +86,11 @@ SEARCH_TERMS = [
     "registrant",
     "registrants",
     "registration",
-    "registrationNumber",
-    "registrationNumbers",
-    "legalEntity",
+    "registrationnumber",
+    "registrationnumbers",
+    "legalentity",
     "legal-entity",
-    "rmlId",
+    "rmlid",
     "dossier-list",
     "api-",
     "/api/",
@@ -131,7 +141,7 @@ def create_session():
 
 
 # --------------------------------------------------
-# SAFE REQUEST
+# SAFE HTTP REQUEST
 # --------------------------------------------------
 def safe_get(
     session,
@@ -159,59 +169,62 @@ def safe_get(
             allow_redirects=True,
         )
 
-        return {
-            "success": True,
-            "response": response,
-            "error": None,
-        }
+        return response, None
 
-    except Exception as error:
-        return {
-            "success": False,
-            "response": None,
-            "error": str(error),
-        }
+    except requests.RequestException as error:
+        return None, str(error)
 
 
 # --------------------------------------------------
-# SCRIPT EXTRACTION
+# SCRIPT URL EXTRACTION
 # --------------------------------------------------
 def extract_script_urls(
     html_text,
     page_url,
 ):
     script_sources = re.findall(
-        r"""<script[^>]+src=["']([^"']+)["']""",
+        (
+            r"<script\b[^>]*"
+            r"\bsrc\s*=\s*"
+            r"[\"']([^\"']+)[\"']"
+            r"[^>]*>"
+        ),
         html_text or "",
         flags=re.IGNORECASE,
     )
 
-    urls = []
-
-    seen = set()
+    script_urls = []
+    seen_urls = set()
 
     for source in script_sources:
+        source = str(
+            source
+        ).strip()
+
+        if not source:
+            continue
+
         full_url = urljoin(
             page_url,
             source,
         )
 
-        if full_url in seen:
+        if full_url in seen_urls:
             continue
 
-        seen.add(
+        seen_urls.add(
             full_url
         )
 
-        urls.append(
+        script_urls.append(
             full_url
         )
 
-    return urls
+    return script_urls
 
 
 # --------------------------------------------------
-# API STRING EXTRACTION
+# API-LIKE STRING EXTRACTION
 # --------------------------------------------------
 def extract_api_like_strings(
     text,
@@ -220,15 +233,32 @@ def extract_api_like_strings(
         return []
 
     patterns = [
-        r"""["']([^"']*?/api-[^"']+)["']""",
-        r"""["']([^"']*?/api/[^"']+)["']""",
-        r"""["']([^"']*?api-[A-Za-z0-9_\-/{}.?=&]+)["']""",
-        r"""["']([^"']*?/v1/[A-Za-z0-9_\-/{}.?=&]+)["']""",
+        (
+            r"[\"']"
+            r"([^\"']*/api-[^\"']+)"
+            r"[\"']"
+        ),
+        (
+            r"[\"']"
+            r"([^\"']*/api/[^\"']+)"
+            r"[\"']"
+        ),
+        (
+            r"[\"']"
+            r"([^\"']*api-"
+            r"[A-Za-z0-9_\-/{}.?=&]+)"
+            r"[\"']"
+        ),
+        (
+            r"[\"']"
+            r"([^\"']*/v1/"
+            r"[A-Za-z0-9_\-/{}.?=&]+)"
+            r"[\"']"
+        ),
     ]
 
     values = []
-
-    seen = set()
+    seen_values = set()
 
     for pattern in patterns:
         matches = re.findall(
@@ -238,31 +268,31 @@ def extract_api_like_strings(
         )
 
         for match in matches:
-            match = (
+            value = (
                 str(match)
                 .replace("\\/", "/")
                 .strip()
             )
 
-            if not match:
+            if not value:
                 continue
 
-            if match in seen:
+            if value in seen_values:
                 continue
 
-            seen.add(
-                match
+            seen_values.add(
+                value
             )
 
             values.append(
-                match
+                value
             )
 
     return values
 
 
 # --------------------------------------------------
-# SEARCH CONTEXT
+# SEARCH FOR RELEVANT CODE CONTEXTS
 # --------------------------------------------------
 def find_contexts(
     text,
@@ -271,11 +301,12 @@ def find_contexts(
     if not text:
         return []
 
+    lower_text = (
+        text.lower()
+    )
+
     contexts = []
-
-    seen = set()
-
-    lower_text = text.lower()
+    seen_contexts = set()
 
     for term in SEARCH_TERMS:
         term_lower = (
@@ -285,22 +316,28 @@ def find_contexts(
         start_position = 0
 
         while True:
-            position = lower_text.find(
-                term_lower,
-                start_position,
+            position = (
+                lower_text.find(
+                    term_lower,
+                    start_position,
+                )
             )
 
-            if position == -1:
+            if position < 0:
                 break
 
             context_start = max(
                 0,
-                position - 350,
+                position - 300,
             )
 
             context_end = min(
                 len(text),
-                position + len(term) + 650,
+                (
+                    position
+                    + len(term)
+                    + 650
+                ),
             )
 
             context = text[
@@ -310,9 +347,10 @@ def find_contexts(
 
             context = (
                 context
-                .replace("\\n", " ")
-                .replace("\\r", " ")
-                .replace("\\t", " ")
+                .replace("\\/", "/")
+                .replace("\n", " ")
+                .replace("\r", " ")
+                .replace("\t", " ")
             )
 
             context = re.sub(
@@ -321,21 +359,31 @@ def find_contexts(
                 context,
             ).strip()
 
-            key = (
+            context_key = (
+                source,
                 term_lower,
-                context[:300],
+                context[:250],
             )
 
-            if key not in seen:
-                seen.add(
-                    key
+            if (
+                context_key
+                not in seen_contexts
+            ):
+                seen_contexts.add(
+                    context_key
                 )
 
                 contexts.append(
                     {
-                        "source": source,
-                        "term": term,
-                        "context": context,
+                        "source": (
+                            source
+                        ),
+                        "term": (
+                            term
+                        ),
+                        "context": (
+                            context
+                        ),
                     }
                 )
 
@@ -344,55 +392,58 @@ def find_contexts(
                 + len(term)
             )
 
-            if len(contexts) >= 200:
+            if len(contexts) >= 250:
                 return contexts
 
     return contexts
 
 
 # --------------------------------------------------
-# ANALYSE PAGE
+# ANALYSE ONE PAGE
 # --------------------------------------------------
 def analyse_page(
     session,
     url,
 ):
-    request_result = safe_get(
-        session,
-        url,
+    response, error = safe_get(
+        session=session,
+        url=url,
     )
 
-    if not request_result[
-        "success"
-    ]:
+    if response is None:
         return {
             "requested_url": url,
-            "final_url": None,
+            "final_url": "",
             "status": None,
-            "content_type": None,
-            "response_length": 0,
+            "content_type"           "response_length": 0,
             "scripts": [],
             "api_strings": [],
             "contexts": [],
             "body_preview": "",
-            "error": request_result[
-                "error"
-            ],
+            "error": error,
         }
-
-    response = request_result[
-        "response"
-    ]
 
     page_text = (
         response.text
+        or ""
     )
 
     script_urls = (
         extract_script_urls(
-            page_text,
-            response.url,
+            html_text=page_text,
+            page_url=response.url,
         )
+    )
+
+    api_strings = (
+        extract_api_like_strings(
+            page_text
+        )
+    )
+
+    contexts = find_contexts(
+        text=page_text,
+        source="PAGE HTML",
     )
 
     return {
@@ -412,17 +463,14 @@ def analyse_page(
         "response_length": len(
             response.content
         ),
-        "scripts": script_urls,
+        "scripts": (
+            script_urls
+        ),
         "api_strings": (
-            extract_api_like_strings(
-                page_text
-            )
+            api_strings
         ),
         "contexts": (
-            find_contexts(
-                page_text,
-                "PAGE HTML",
-            )
+            contexts
         ),
         "body_preview": (
             page_text[:5000]
@@ -432,42 +480,52 @@ def analyse_page(
 
 
 # --------------------------------------------------
-# ANALYSE JAVASCRIPT
+# ANALYSE ONE JAVASCRIPT FILE
 # --------------------------------------------------
 def analyse_script(
     session,
     script_url,
     referer,
 ):
-    request_result = safe_get(
-        session,
-        script_url,
+    response, error = safe_get(
+        session=session,
+        url=script_url,
         referer=referer,
     )
 
-    if not request_result[
-        "success"
-    ]:
+    if response is None:
         return {
-            "script_url": script_url,
+            "script_url": (
+                script_url
+            ),
             "status": None,
-            "content_type": None,
+            "content_type": "",
             "response_length": 0,
             "api_strings": [],
             "contexts": [],
-            "error": request_result[
-                "error"
-            ],
+            "error": error,
         }
 
-    response = request_result[
-        "response"
-    ]
+    script_text = (
+        response.text
+        or ""
+    )
 
-    text = response.text
+    api_strings = (
+        extract_api_like_strings(
+            script_text
+        )
+    )
+
+    contexts = find_contexts(
+        text=script_text,
+        source=script_url,
+    )
 
     return {
-        "script_url": script_url,
+        "script_url": (
+            script_url
+        ),
         "status": (
             response.status_code
         ),
@@ -481,22 +539,17 @@ def analyse_script(
             response.content
         ),
         "api_strings": (
-            extract_api_like_strings(
-                text
-            )
+            api_strings
         ),
         "contexts": (
-            find_contexts(
-                text,
-                script_url,
-            )
+            contexts
         ),
         "error": None,
     }
 
 
 # --------------------------------------------------
-# COMPLETE DISCOVERY
+# COMPLETE ROUTE DISCOVERY
 # --------------------------------------------------
 def run_discovery():
     session = (
@@ -505,52 +558,58 @@ def run_discovery():
 
     page_results = []
 
-    all_script_urls = []
-
-    seen_scripts = set()
-
-    for page_url in (
-        REACH_REGISTRATION_URLS
-    ):
-        page_result = analyse_page(
-            session,
-            page_url,
+    for page_url in PAGE_URLS:
+        page_result = (
+            analyse_page(
+                session=session,
+                url=page_url,
+            )
         )
 
         page_results.append(
             page_result
         )
 
-        for script_url in (
-            page_result[
+    script_urls = []
+    seen_script_urls = set()
+
+    for page_result in page_results:
+        page_scripts = (
+            page_result.get(
                 "scripts"
-            ]
+            )
+            or []
+        )
+
+        for script_url in (
+            page_scripts
         ):
-            if script_url in seen_scripts:
+            if (
+                script_url
+                in seen_script_urls
+            ):
                 continue
 
-            seen_scripts.add(
+            seen_script_urls.add(
                 script_url
             )
 
-            all_script_urls.append(
+            script_urls.append(
                 script_url
             )
 
     script_results = []
 
-    referer = (
-        SUBSTANCE_OVERVIEW_URL
-    )
+    referer = PAGE_URLS[0]
 
     for script_url in (
-        all_script_urls
+        script_urls
     ):
         script_result = (
             analyse_script(
-                session,
-                script_url,
-                referer,
+                session=session,
+                script_url=script_url,
+                referer=referer,
             )
         )
 
@@ -558,76 +617,108 @@ def run_discovery():
             script_result
         )
 
-    api_strings = []
-
+    combined_api_strings = []
     seen_api_strings = set()
 
-    for result in (
+    for page_result in (
         page_results
     ):
-        for value in result[
-            "api_strings"
-        ]:
-            if (
-                value
-                in seen_api_strings
-            ):
+        page_api_strings = (
+            page_result.get(
+                "api_strings"
+            )
+            or []
+        )
+
+        for value in (
+            page_api_strings
+        ):
+            key = (
+                "PAGE HTML",
+                value,
+            )
+
+            if key in seen_api_strings:
                 continue
 
             seen_api_strings.add(
-                value
+                key
             )
 
-            api_strings.append(
+            combined_api_strings.append(
                 {
                     "source": (
                         "PAGE HTML"
                     ),
-                    "value": value,
+                    "value": (
+                        value
+                    ),
                 }
             )
 
-    for result in (
+    for script_result in (
         script_results
     ):
-        for value in result[
-            "api_strings"
-        ]:
-            if (
-                value
-                in seen_api_strings
-            ):
+        script_api_strings = (
+            script_result.get(
+                "api_strings"
+            )
+            or []
+        )
+
+        source = (
+            script_result.get(
+                "script_url",
+                "",
+            )
+        )
+
+        for value in (
+            script_api_strings
+        ):
+            key = (
+                source,
+                value,
+            )
+
+            if key in seen_api_strings:
                 continue
 
             seen_api_strings.add(
-                value
+                key
             )
 
-            api_strings.append(
+            combined_api_strings.append(
                 {
                     "source": (
-                        result[
-                            "script_url"
-                        ]
+                        source
                     ),
-                    "value": value,
+                    "value": (
+                        value
+                    ),
                 }
             )
 
-    all_contexts = []
+    combined_contexts = []
 
-    for result in page_results:
-        all_contexts.extend(
-            result[
+    for page_result in (
+        page_results
+    ):
+        combined_contexts.extend(
+            page_result.get(
                 "contexts"
-            ]
+            )
+            or []
         )
 
-    for result in script_results:
-        all_contexts.extend(
-            result[
+    for script_result in (
+        script_results
+    ):
+        combined_contexts.extend(
+            script_result.get(
                 "contexts"
-            ]
+            )
+            or []
         )
 
     return {
@@ -638,16 +729,16 @@ def run_discovery():
             script_results
         ),
         "api_strings": (
-            api_strings
+            combined_api_strings
         ),
         "contexts": (
-            all_contexts
+            combined_contexts
         ),
     }
 
 
 # --------------------------------------------------
-# STREAMLIT UI
+# STREAMLIT INTERFACE
 # --------------------------------------------------
 st.title(
     "ECHA Registrants route discovery"
@@ -658,21 +749,20 @@ st.caption(
 )
 
 st.write(
-    "This diagnostic inspects the public "
-    "ECHA CHEM application resources for the "
-    "API route used by the REACH Registrants tab."
+    "This diagnostic inspects public ECHA CHEM "
+    "page resources for the route used by the "
+    "REACH Registrants view."
 )
 
 st.info(
-    "This test does not use Selenium, "
-    "Playwright, browser automation, CAPTCHA "
-    "handling, authentication bypasses or "
-    "anti-bot workarounds."
+    "This test does not use browser automation, "
+    "does not handle CAPTCHA challenges, and does "
+    "not attempt to bypass ECHA access controls."
 )
 
 
 # --------------------------------------------------
-# CHEMICAL
+# TEST SUBSTANCE
 # --------------------------------------------------
 st.subheader(
     "Known test substance"
@@ -698,23 +788,22 @@ col3.metric(
 )
 
 st.write(
-    "Expected benchmark:"
-)
-
-st.write(
-    "**42 registrants** are visible "
-    "in the ECHA CHEM Registrants tab "
-    "for this test case."
+    "Expected benchmark: the ECHA CHEM "
+    "interface shows 42 registrants for "
+    "this test substance."
 )
 
 
 # --------------------------------------------------
-# RUN
+# RUN DISCOVERY
 # --------------------------------------------------
-if st.button(
+run_button = st.button(
     "Discover registrants route",
     type="primary",
-):
+)
+
+
+if run_button:
     with st.spinner(
         "Inspecting ECHA CHEM "
         "application resources..."
@@ -728,7 +817,7 @@ if st.button(
     )
 
     # ----------------------------------
-    # PAGE RESULTS
+    # 1. PAGE RESULTS
     # ----------------------------------
     st.subheader(
         "1. Page requests"
@@ -736,68 +825,94 @@ if st.button(
 
     page_rows = []
 
-    for page in result[
-        "pages"
-    ]:
+    pages = (
+        result.get(
+            "pages"
+        )
+        or []
+    )
+
+    for page in pages:
+        scripts = (
+            page.get(
+                "scripts"
+            )
+            or []
+        )
+
+        contexts = (
+            page.get(
+                "contexts"
+            )
+            or []
+        )
+
         page_rows.append(
             {
                 "Requested URL": (
-                    page[
-                        "requested_url"
-                    ]
+                    page.get(
+                        "requested_url",
+                        "",
+                    )
                 ),
                 "HTTP": (
-                    page[
+                    page.get(
                         "status"
-                    ]
+                    )
                 ),
                 "Final URL": (
-                    page[
-                        "final_url"
-                    ]
+                    page.get(
+                        "final_url",
+                        "",
+                    )
                 ),
                 "Content-Type": (
-                    page[
-                        "content_type"
-                    ]
+                    page.get(
+                        "content_type",
+                        "",
+                    )
                 ),
                 "Bytes": (
-                    page[
-                        "response_length"
-                    ]
+                    page.get(
+                        "response_length",
+                        0,
+                    )
                 ),
                 "JavaScript files": (
-                    len(
-                        page[
-                            "scripts"
-                        ]
-                    )
+                    len(scripts)
                 ),
                 "Keyword contexts": (
-                    len(
-                        page[
-                            "contexts"
-                        ]
-                    )
+                    len(contexts)
                 ),
                 "Error": (
-                    page[
+                    page.get(
                         "error"
-                    ]
+                    )
                 ),
             }
         )
 
-    st.dataframe(
-        pd.DataFrame(
-            page_rows
-        ),
-        width="stretch",
-        hide_index=True,
-    )
+    if page_rows:
+        page_dataframe = (
+            pd.DataFrame(
+                page_rows
+            )
+        )
+
+        st.dataframe(
+            page_dataframe,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    else:
+        st.warning(
+            "No page request results "
+            "were returned."
+        )
 
     # ----------------------------------
-    # SCRIPT RESULTS
+    # 2. JAVASCRIPT RESULTS
     # ----------------------------------
     st.subheader(
         "2. JavaScript resources"
@@ -805,170 +920,197 @@ if st.button(
 
     script_rows = []
 
-    for script in   script_rows.append(
+    scripts = (
+        result.get(
+            "scripts"
+        )
+        or []
+    )
+
+    for script in scripts:
+        api_strings = (
+            script.get(
+                "api_strings"
+            )
+            or []
+        )
+
+        contexts = (
+            script.get(
+                "contexts"
+            )
+            or []
+        )
+
+        script_rows.append(
             {
                 "Script": (
-                    script[
-                        "script_url"
-                    ]
+                    script.get(
+                        "script_url",
+                        "",
+                    )
                 ),
                 "HTTP": (
-                    script[
+                    script.get(
                         "status"
-                    ]
+                    )
                 ),
                 "Content-Type": (
-                    script[
-                        "content_type"
-                    ]
+                    script.get(
+                        "content_type",
+                        "",
+                    )
                 ),
                 "Bytes": (
-                    script[
-                        "response_length"
-                    ]
+                    script.get(
+                        "response_length",
+                        0,
+                    )
                 ),
                 "API-like strings": (
                     len(
-                        script[
-                            "api_strings"
-                        ]
+                        api_strings
                     )
                 ),
                 "Keyword contexts": (
                     len(
-                        script[
-                            "contexts"
-                        ]
+                        contexts
                     )
                 ),
                 "Error": (
-                    script[
+                    script.get(
                         "error"
-                    ]
+                    )
                 ),
             }
         )
 
     if script_rows:
-        st.dataframe(
+        script_dataframe = (
             pd.DataFrame(
                 script_rows
-            ),
-            width="stretch",
+            )
+        )
+
+        st.dataframe(
+            script_dataframe,
+            use_container_width=True,
             hide_index=True,
         )
 
     else:
         st.warning(
-            "No JavaScript resource URLs "
-            "were discovered."
+            "No JavaScript resource "
+            "URLs were discovered."
         )
 
     # ----------------------------------
-    # API STRINGS
+    # 3. API-LIKE STRINGS
     # ----------------------------------
     st.subheader(
         "3. API-like strings"
     )
 
-    if result[
-        "api_strings"
-    ]:
+    api_rows = (
+        result.get(
+            "api_strings"
+        )
+        or []
+    )
+
+    if api_rows:
         st.success(
             "API-like strings were found."
         )
 
-        st.dataframe(
+        api_dataframe = (
             pd.DataFrame(
-                result[
-                    "api_strings"
-                ]
-            ),
-            width="stretch",
+                api_rows
+            )
+        )
+
+        st.dataframe(
+            api_dataframe,
+            use_container_width=True,
             hide_index=True,
         )
 
     else:
         st.warning(
-            "No explicit API-like strings "
-            "were found."
+            "No explicit API-like "
+            "strings were found."
         )
 
     # ----------------------------------
-    # REGISTRANT CONTEXTS
+    # 4. REGISTRANT CODE CONTEXTS
     # ----------------------------------
     st.subheader(
-        "4. Registrant-related code contexts"
+        "4. Registrant-related "
+        "code contexts"
     )
 
-    useful_contexts = [
-        row
-        for row in result[
+    contexts = (
+        result.get(
             "contexts"
-        ]
-        if row[
-            "term"
-        ].lower()
-        in {
-            "registrant",
-            "registrants",
-            "registration",
-            "registrationnumber",
-            "registrationnumbers",
-            "legalentity",
-            "legal-entity",
-            "rmlid",
-            "dossier-list",
-            "api-",
-            "/api/",
-            "/v1/",
-        }
-    ]
+        )
+        or []
+    )
 
-    if useful_contexts:
-        st.success(
-            "Relevant frontend code "
-            "contexts were found."
+    if contexts:
+        context_dataframe = (
+            pd.DataFrame(
+                contexts
+            )
         )
 
         st.dataframe(
-            pd.DataFrame(
-                useful_contexts
-            ),
-            width="stretch",
+            context_dataframe,
+            use_container_width=True,
             hide_index=True,
         )
 
     else:
         st.warning(
-            "No registrant-related frontend "
-            "code context was found."
+            "No registrant-related "
+            "frontend code context "
+            "was found."
         )
 
     # ----------------------------------
-    # RAW PAGE DETAILS
+    # RAW PAGE DIAGNOSTICS
     # ----------------------------------
     with st.expander(
         "Raw page diagnostics",
         expanded=False,
     ):
-        for page in result[
-            "pages"
-        ]:
+        for page in pages:
             st.markdown(
                 "### Page"
             )
 
             st.code(
-                page[
-                    "requested_url"
-                ],
+                page.get(
+                    "requested_url",
+                    "",
+                ),
                 language=None,
             )
 
             st.write(
-                f"HTTP: "
-                f"{page['status']}"
+                "HTTP: "
+                f"{page.get('status')}"
+            )
+
+            st.write(
+                "**Final URL:**"
+            )
+
+            st.code(
+                page.get(
+                    "final_url",
+                    "",
+                ),
+                language=None,
             )
 
             st.write(
@@ -976,9 +1118,10 @@ if st.button(
             )
 
             st.json(
-                page[
+                page.get(
                     "scripts"
-                ]
+                )
+                or []
             )
 
             st.write(
@@ -986,8 +1129,9 @@ if st.button(
             )
 
             st.code(
-                page[
-                    "body_preview"
-                ],
+                page.get(
+                    "body_preview",
+                    "",
+                ),
                 language="html",
             )
