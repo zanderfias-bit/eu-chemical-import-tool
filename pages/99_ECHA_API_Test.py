@@ -2,7 +2,7 @@ import html
 import re
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import pandas as pd
 import requests
@@ -12,7 +12,7 @@ from urllib3.util.retry import Retry
 
 
 # --------------------------------------------------
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # --------------------------------------------------
 st.set_page_config(
     page_title="ECHA REST API Test",
@@ -20,11 +20,15 @@ st.set_page_config(
     layout="wide",
 )
 
-CODE_VERSION = "ECHA_REST_API_TEST_V6"
+
+# --------------------------------------------------
+# VERSION
+# --------------------------------------------------
+CODE_VERSION = "ECHA_REST_API_TEST_V7"
 
 
 # --------------------------------------------------
-# PATHS AND COLUMNS
+# PATHS
 # --------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -36,6 +40,10 @@ ECHA_DATA_FILE = (
 
 ECHA_SHEET_NAME = "Substances list"
 
+
+# --------------------------------------------------
+# EXCEL COLUMNS
+# --------------------------------------------------
 NAME_COLUMN = "Name"
 EC_COLUMN = "EC Number"
 CAS_COLUMN = "CAS Number"
@@ -43,7 +51,7 @@ URL_COLUMN = "Link to substance's overview page"
 
 
 # --------------------------------------------------
-# ECHA ROUTES
+# ECHA ENDPOINTS
 # --------------------------------------------------
 ECHA_BASE_URL = "https://chem.echa.europa.eu"
 
@@ -69,12 +77,10 @@ PUBLISHED_DOSSIER_ENDPOINT = (
 CONNECT_TIMEOUT_SECONDS = 30
 READ_TIMEOUT_SECONDS = 90
 
-MAX_PUBLISHED_DETAIL_PAGES = 250
-
 REQUEST_HEADERS = {
     "Accept": (
         "application/json, text/plain, "
-        "text/html, */*"
+        "text/html, application/javascript, */*"
     ),
     "Accept-Language": "en-US,en;q=0.9",
     "User-Agent": (
@@ -86,32 +92,27 @@ REQUEST_HEADERS = {
 
 
 # --------------------------------------------------
-# REGISTRANT SEARCH TERMS
+# JAVASCRIPT DIAGNOSTIC TERMS
 # --------------------------------------------------
-REGISTRANT_FIELD_TERMS = [
-    "Legal entity name",
-    "Legal entity",
-    "Registrant name",
-    "Registrant",
-    "Company name",
-    "Organisation name",
-    "Organization name",
-    "Registration holder",
-    "Applicant name",
-    "Manufacturer name",
-    "Importer name",
-    "Only representative",
-]
-
-REGISTRANT_EXCLUDED_PHRASES = [
-    "registrant specific composition",
-    "registrant-specific composition",
-    "registrant specific analytical information",
-    "registrant specific",
-    "information provided by the registrant",
-    "information submitted by the registrant",
-    "registrants may",
-    "registrants shall",
+JAVASCRIPT_SEARCH_TERMS = [
+    ".html",
+    "href",
+    "location",
+    "window.location",
+    "document.location",
+    "fetch(",
+    "iframe",
+    "content",
+    "html-pages",
+    "assetExternalId",
+    "setHeaderDocId",
+    "addEventListener",
+    "preventDefault",
+    "target",
+    "pathname",
+    "replace(",
+    "substring(",
+    "split(",
 ]
 
 
@@ -308,6 +309,7 @@ def execute_echa_request(
     url,
     params=None,
     additional_headers=None,
+    body_preview_length=1000,
 ):
     print(
         f"ECHA REST GET: {url}",
@@ -362,7 +364,7 @@ def execute_echa_request(
 
     print(
         "ECHA REST BODY PREVIEW: "
-        f"{response.text[:1000]}",
+        f"{response.text[:body_preview_length]}",
         flush=True,
     )
 
@@ -580,59 +582,15 @@ def select_first_active_dossier(
 
 
 # --------------------------------------------------
-# HTML TO SEARCHABLE TEXT
-# --------------------------------------------------
-def html_to_searchable_text(
-    html_content,
-):
-    if not html_content:
-        return ""
-
-    text = str(html_content)
-
-    text = re.sub(
-        r"<script\b[^>]*>.*?</script>",
-        " ",
-        text,
-        flags=(
-            re.IGNORECASE
-            | re.DOTALL
-        ),
-    )
-
-    text = re.sub(
-        r"<style\b[^>]*>.*?</style>",
-        " ",
-        text,
-        flags=(
-            re.IGNORECASE
-            | re.DOTALL
-        ),
-    )
-
-    text = re.sub(
-        r"<[^>]+>",
-        " ",
-        text,
-    )
-
-    text = html.unescape(text)
-
-    return " ".join(
-        text.replace("\xa0", " ").split()
-    )
-
-
-# --------------------------------------------------
 # HTML LINK PARSER
 # --------------------------------------------------
-class DossierLinkParser(HTMLParser):
+class DossierIndexParser(HTMLParser):
     def __init__(self):
         super().__init__(
             convert_charrefs=True
         )
 
-        self.hrefs = []
+        self.links = []
         self.scripts = []
 
     def handle_starttag(
@@ -640,858 +598,432 @@ class DossierLinkParser(HTMLParser):
         tag,
         attrs,
     ):
-        attributes = dict(attrs)
+        attributes = {
+            str(key): value
+            for key, value in attrs
+        }
 
-        href = attributes.get(
-            "href"
-        )
+        tag_name = tag.lower()
 
-        src = attributes.get(
-            "src"
-        )
+        if tag_name == "a":
+            href = attributes.get("href")
 
-        if href:
-            self.hrefs.append(
-                href
-            )
+            if href is not None:
+                self.links.append(
+                    {
+                        "href": href,
+                        "id": attributes.get("id"),
+                        "class": attributes.get("class"),
+                        "target": attributes.get("target"),
+                        "title": attributes.get("title"),
+                        "onclick": attributes.get("onclick"),
+                        "data_target": attributes.get(
+                            "data-target"
+                        ),
+                        "data_id": attributes.get(
+                            "data-id"
+                        ),
+                    }
+                )
 
-        if (
-            tag.lower() == "script"
-            and src
-        ):
-            self.scripts.append(
-                src
-            )
+        if tag_name == "script":
+            src = attributes.get("src")
+
+            if src:
+                self.scripts.append(
+                    src
+                )
 
 
 # --------------------------------------------------
-# EXTRACT REFERENCES FROM INDEX
+# PARSE INDEX HTML
 # --------------------------------------------------
-def extract_index_references(
-    index_html,
-):
-    parser = DossierLinkParser()
+def parse_index_html(index_html):
+    parser = DossierIndexParser()
 
     try:
         parser.feed(
             index_html or ""
         )
 
-    except Exception:
-        pass
+    except Exception as error:
+        return {
+            "links": [],
+            "scripts": [],
+            "parse_error": str(error),
+        }
 
-    hrefs = list(
-        parser.hrefs
-    )
+    unique_links = []
+    seen_links = set()
 
-    scripts = list(
-        parser.scripts
-    )
-
-    # Regex fallback.
-    #
-    # Important V6 fix:
-    # capture the VALUE between the quotes.
-    href_matches = re.findall(
-        r'''href\s*=\s*[^"']+["']''',
-        index_html or "",
-        flags=re.IGNORECASE,
-    )
-
-    hrefs.extend(
-        href_matches
-    )
-
-    script_matches = re.findall(
-        r'''<script\b[^"']+["']''',
-        index_html or "",
-        flags=re.IGNORECASE,
-    )
-
-    scripts.extend(
-        script_matches
-    )
-
-    clean_hrefs = []
-
-    for value in hrefs:
-        value = html.unescape(
-            str(value).strip()
+    for link in parser.links:
+        href = normalise_text(
+            link.get("href")
         )
 
-        if value:
-            clean_hrefs.append(
-                value
-            )
-
-    clean_scripts = []
-
-    for value in scripts:
-        value = html.unescape(
-            str(value).strip()
-        )
-
-        if value:
-            clean_scripts.append(
-                value
-            )
-
-    return (
-        list(
-            dict.fromkeys(
-                clean_hrefs
-            )
-        ),
-        list(
-            dict.fromkeys(
-                clean_scripts
-            )
-        ),
-    )
-
-
-# --------------------------------------------------
-# EXTRACT INTERNAL DOSSIER LINKS
-# --------------------------------------------------
-def extract_internal_dossier_links(
-    index_html,
-    index_url,
-):
-    (
-        href_values,
-        script_values,
-    ) = extract_index_references(
-        index_html
-    )
-
-    links = []
-    ignored_assets = []
-
-    for href in href_values:
-        lower_href = href.lower()
-
-        if lower_href.startswith(
-            (
-                "#",
-                "javascript:",
-                "mailto:",
-                "tel:",
-            )
-        ):
+        if not href:
             continue
 
-        if lower_href.startswith(
-            (
-                "assets/",
-                "./assets/",
-            )
-        ):
-            ignored_assets.append(
-                href
-            )
-
-            continue
-
-        if lower_href.endswith(
-            (
-                ".css",
-                ".js",
-                ".png",
-                ".jpg",
-                ".jpeg",
-                ".gif",
-                ".svg",
-                ".ico",
-                ".map",
-            )
-        ):
-            continue
-
-        absolute_url = urljoin(
-            index_url,
+        key = (
             href,
-        )
-
-        parsed_url = urlparse(
-            absolute_url
-        )
-
-        if (
-            parsed_url.netloc
-            and parsed_url.netloc
-            != "chem.echa.europa.eu"
-        ):
-            continue
-
-        if (
-            "/html-pages/"
-            not in absolute_url
-        ):
-            continue
-
-        if (
-            absolute_url.rstrip("/")
-            == index_url.rstrip("/")
-        ):
-            continue
-
-        last_path_part = (
-            parsed_url.path
-            .rstrip("/")
-            .split("/")[-1]
-        )
-
-        if "." not in last_path_part:
-            absolute_url = (
-                absolute_url.rstrip("/")
-                + ".html"
-            )
-
-        links.append(
-            absolute_url
-        )
-
-    return {
-        "all_hrefs": href_values,
-        "scripts": script_values,
-        "ignored_asset_hrefs": (
-            ignored_assets
-        ),
-        "internal_links": list(
-            dict.fromkeys(
-                links
-            )
-        ),
-    }
-
-
-# --------------------------------------------------
-# CLEAN REGISTRANT CANDIDATE
-# --------------------------------------------------
-def clean_possible_registrant_value(
-    value,
-):
-    value = normalise_text(
-        value
-    )
-
-    value = re.sub(
-        r"^[\s:;|\-]+",
-        "",
-        value,
-    )
-
-    value = re.sub(
-        r"[\s:;|\-]+$",
-        "",
-        value,
-    )
-
-    value = normalise_text(
-        value
-    )
-
-    if len(value) < 3:
-        return ""
-
-    if len(value) > 250:
-        return ""
-
-    lower_value = value.lower()
-
-    if any(
-        excluded in lower_value
-        for excluded
-        in REGISTRANT_EXCLUDED_PHRASES
-    ):
-        return ""
-
-    generic_values = {
-        "registrant",
-        "legal entity",
-        "company",
-        "company name",
-        "organisation",
-        "organisation name",
-        "organization",
-        "organization name",
-        "manufacturer",
-        "importer",
-        "only representative",
-        "registration holder",
-        "applicant",
-        "not available",
-        "not applicable",
-        "confidential",
-    }
-
-    if lower_value in generic_values:
-        return ""
-
-    return value
-
-
-# --------------------------------------------------
-# EXTRACT LABEL/VALUE PAIRS
-# --------------------------------------------------
-def extract_html_label_value_pairs(
-    html_content,
-):
-    pairs = []
-
-    if not html_content:
-        return pairs
-
-    table_rows = re.findall(
-        r"<tr\b[^>]*>(.*?)</tr>",
-        html_content,
-        flags=(
-            re.IGNORECASE
-            | re.DOTALL
-        ),
-    )
-
-    for row_html in table_rows:
-        cells = re.findall(
-            r"<(?:th|td)\b[^>]*>"
-            r"(.*?)"
-            r"</(?:th|td)>",
-            row_html,
-            flags=(
-                re.IGNORECASE
-                | re.DOTALL
+            normalise_text(
+                link.get("onclick")
             ),
         )
 
-        cell_texts = [
-            html_to_searchable_text(
-                cell
-            )
-            for cell in cells
-        ]
+        if key in seen_links:
+            continue
 
-        cell_texts = [
-            value
-            for value in cell_texts
-            if value
-        ]
+        seen_links.add(key)
+        unique_links.append(link)
 
-        if len(cell_texts) >= 2:
-            pairs.append(
-                (
-                    cell_texts[0],
-                    cell_texts[1],
-                )
-            )
-
-    definition_pairs = re.findall(
-        r"<dt\b[^>]*>(.*?)</dt>\s*"
-        r"<dd\b[^>]*>(.*?)</dd>",
-        html_content,
-        flags=(
-            re.IGNORECASE
-            | re.DOTALL
-        ),
+    unique_scripts = list(
+        dict.fromkeys(
+            normalise_text(script)
+            for script in parser.scripts
+            if normalise_text(script)
+        )
     )
 
-    for (
-        label_html,
-        value_html,
-    ) in definition_pairs:
-        label = (
-            html_to_searchable_text(
-                label_html
-            )
-        )
-
-        value = (
-            html_to_searchable_text(
-                value_html
-            )
-        )
-
-        if label and value:
-            pairs.append(
-                (
-                    label,
-                    value,
-                )
-            )
-
-    return pairs
+    return {
+        "links": unique_links,
+        "scripts": unique_scripts,
+        "parse_error": None,
+    }
 
 
 # --------------------------------------------------
-# EXTRACT REGISTRANT CANDIDATES
+# IDENTIFY DOSSIER ROUTE IDS
 # --------------------------------------------------
-def extract_registrant_candidates(
-    html_content,
-    source_url,
+def looks_like_dossier_route_id(value):
+    value = normalise_text(value)
+
+    return bool(
+        re.fullmatch(
+            (
+                r"[0-9a-fA-F]{8}-"
+                r"[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{12}"
+                r"_"
+                r"[0-9a-fA-F]{8}-"
+                r"[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{4}-"
+                r"[0-9a-fA-F]{12}"
+            ),
+            value,
+        )
+    )
+
+
+# --------------------------------------------------
+# EXTRACT CONTEXT AROUND TEXT
+# --------------------------------------------------
+def extract_contexts(
+    source_text,
+    search_value,
+    context_characters=350,
+    maximum_matches=5,
 ):
-    candidates = []
+    if not source_text:
+        return []
 
-    for (
-        label,
-        value,
-    ) in extract_html_label_value_pairs(
-        html_content
+    if not search_value:
+        return []
+
+    contexts = []
+
+    for match in re.finditer(
+        re.escape(search_value),
+        source_text,
+        flags=re.IGNORECASE,
     ):
-        matching_term = None
-
-        for term in REGISTRANT_FIELD_TERMS:
-            if (
-                term.lower()
-                in label.lower()
-            ):
-                matching_term = term
-                break
-
-        if not matching_term:
-            continue
-
-        cleaned_value = (
-            clean_possible_registrant_value(
-                value
-            )
+        start = max(
+            0,
+            match.start()
+            - context_characters,
         )
 
-        if cleaned_value:
-            candidates.append(
+        end = min(
+            len(source_text),
+            match.end()
+            + context_characters,
+        )
+
+        contexts.append(
+            source_text[start:end]
+            .replace("\r", " ")
+            .replace("\n", " ")
+            .strip()
+        )
+
+        if (
+            len(contexts)
+            >= maximum_matches
+        ):
+            break
+
+    return contexts
+
+
+# --------------------------------------------------
+# FIND JAVASCRIPT CLUES
+# --------------------------------------------------
+def find_javascript_clues(
+    javascript_text,
+):
+    clues = []
+
+    if not javascript_text:
+        return clues
+
+    for term in JAVASCRIPT_SEARCH_TERMS:
+        contexts = extract_contexts(
+            source_text=javascript_text,
+            search_value=term,
+            context_characters=500,
+            maximum_matches=10,
+        )
+
+        for context in contexts:
+            clues.append(
                 {
-                    "field": label,
-                    "value": cleaned_value,
-                    "source_url": source_url,
-                    "method": (
-                        "HTML label/value"
-                    ),
+                    "term": term,
+                    "context": context,
                 }
             )
 
-    searchable_text = (
-        html_to_searchable_text(
-            html_content
-        )
-    )
-
-    for term in REGISTRANT_FIELD_TERMS:
-        pattern = re.compile(
-            re.escape(term)
-            + r"\s*(?::|-)?\s*"
-            + r"(.{3,250})",
-            flags=re.IGNORECASE,
-        )
-
-        match = pattern.search(
-            searchable_text
-        )
-
-        if not match:
-            continue
-
-        candidate_value = (
-            match.group(1)
-        )
-
-        candidate_value = re.split(
-            r"\s{2,}|"
-            r"(?:Registration number|"
-            r"Registration date|"
-            r"Status|"
-            r"Address|"
-            r"Country|"
-            r"UUID|"
-            r"General information)",
-            candidate_value,
-            maxsplit=1,
-            flags=re.IGNORECASE,
-        )[0]
-
-        cleaned_value = (
-            clean_possible_registrant_value(
-                candidate_value
-            )
-        )
-
-        if cleaned_value:
-            candidates.append(
-                {
-                    "field": term,
-                    "value": cleaned_value,
-                    "source_url": source_url,
-                    "method": (
-                        "Text search"
-                    ),
-                }
-            )
-
-    unique_candidates = []
+    unique_clues = []
     seen = set()
 
-    for candidate in candidates:
+    for clue in clues:
         key = (
-            candidate[
-                "field"
-            ].lower(),
-            candidate[
-                "value"
-            ].lower(),
-            candidate[
-                "source_url"
-            ],
+            clue["term"].lower(),
+            clue["context"],
         )
 
         if key in seen:
             continue
 
-        seen.add(
-            key
-        )
+        seen.add(key)
+        unique_clues.append(clue)
 
-        unique_candidates.append(
-            candidate
-        )
-
-    return unique_candidates
+    return unique_clues
 
 
 # --------------------------------------------------
-# GET PUBLISHED DETAIL PAGE
+# EXTRACT JAVASCRIPT STRING VALUES
 # --------------------------------------------------
-def get_published_detail_page(
-    session,
-    detail_url,
-    referer,
+def extract_javascript_string_values(
+    javascript_text,
 ):
-    detail_url = normalise_text(
-        detail_url
+    if not javascript_text:
+        return []
+
+    values = re.findall(
+        r"""[^"'\\\r\n]{2,300}["']""",
+        javascript_text,
     )
 
-    if not detail_url:
-        return None
+    relevant_values = []
 
-    parsed_url = urlparse(
-        detail_url
-    )
+    for value in values:
+        value = normalise_text(value)
 
-    last_path_part = (
-        parsed_url.path
-        .rstrip("/")
-        .split("/")[-1]
-    )
+        lower_value = value.lower()
 
-    candidate_urls = []
+        if any(
+            marker in lower_value
+            for marker in (
+                ".html",
+                "href",
+                "location",
+                "iframe",
+                "content",
+                "html-pages",
+                "pathname",
+                "index",
+            )
+        ):
+            relevant_values.append(
+                value
+            )
 
-    if last_path_part.endswith(
-        ".html"
-    ):
-        candidate_urls.append(
-            detail_url
-        )
-
-        candidate_urls.append(
-            detail_url[:-5]
-        )
-
-    else:
-        candidate_urls.append(
-            detail_url + ".html"
-        )
-
-        candidate_urls.append(
-            detail_url
-        )
-
-    candidate_urls = list(
+    return list(
         dict.fromkeys(
-            candidate_urls
+            relevant_values
         )
-    )
-
-    last_response = None
-
-    for candidate_url in candidate_urls:
-        response = execute_echa_request(
-            session=session,
-            url=candidate_url,
-            additional_headers={
-                "Accept": (
-                    "text/html,"
-                    "application/xhtml+xml,"
-                    "application/xml;q=0.9,"
-                    "*/*;q=0.8"
-                ),
-                "Referer": referer,
-            },
-        )
-
-        last_response = response
-
-        if (
-            response.status_code
-            == 200
-        ):
-            return response
-
-        if (
-            response.status_code
-            != 404
-        ):
-            return response
-
-    return last_response
+    )[:200]
 
 
 # --------------------------------------------------
-# SCAN INTERNAL DOSSIER PAGES
+# FETCH INDEX JAVASCRIPT
 # --------------------------------------------------
-def scan_published_dossier_pages(
+def fetch_index_scripts(
     session,
     index_url,
-    index_html,
-    rml_id=None,
+    script_references,
 ):
-    link_diagnostics = (
-        extract_internal_dossier_links(
-            index_html=index_html,
-            index_url=index_url,
+    script_results = []
+
+    for script_reference in script_references:
+        script_url = urljoin(
+            index_url,
+            script_reference,
         )
-    )
 
-    internal_links = (
-        link_diagnostics[
-            "internal_links"
-        ]
-    )
-
-    links_to_test = (
-        internal_links[
-            :MAX_PUBLISHED_DETAIL_PAGES
-        ]
-    )
-
-    page_results = []
-    all_candidates = []
-
-    if rml_id:
-        referer = (
-            f"{ECHA_BASE_URL}/"
-            f"{normalise_text(rml_id)}"
-            f"/overview"
-        )
-    else:
-        referer = index_url
-
-    for (
-        page_number,
-        detail_url,
-    ) in enumerate(
-        links_to_test,
-        start=1,
-    ):
         try:
-            response = (
-                get_published_detail_page(
-                    session=session,
-                    detail_url=detail_url,
-                    referer=referer,
-                )
+            response = execute_echa_request(
+                session=session,
+                url=script_url,
+                additional_headers={
+                    "Accept": (
+                        "application/javascript, "
+                        "text/javascript, */*"
+                    ),
+                    "Referer": index_url,
+                },
+                body_preview_length=2000,
             )
 
-            if response is None:
-                raise RuntimeError(
-                    "No response was returned "
-                    "for the detail page."
-                )
-
-            content_type = (
-                response.headers
-                .get(
-                    "content-type",
-                    "",
-                )
-                .lower()
+            javascript_text = (
+                response.text
+                if response.status_code == 200
+                else ""
             )
 
-            candidates = []
-
-            if (
-                response.status_code
-                == 200
-            ):
-                candidates = (
-                    extract_registrant_candidates(
-                        html_content=(
-                            response.text
-                        ),
-                        source_url=(
-                            response.url
-                        ),
-                    )
-                )
-
-                all_candidates.extend(
-                    candidates
-                )
-
-            page_results.append(
+            script_results.append(
                 {
-                    "page_number": (
-                        page_number
+                    "script_reference": (
+                        script_reference
                     ),
-                    "requested_url": (
-                        detail_url
-                    ),
-                    "final_url": (
-                        response.url
-                    ),
+                    "script_url": response.url,
                     "status_code": (
                         response.status_code
                     ),
                     "content_type": (
-                        content_type
+                        response.headers
+                        .get(
+                            "content-type",
+                            "",
+                        )
+                        .lower()
                     ),
-                    "response_size": len(
+                    "content_length": len(
                         response.content
                     ),
-                    "candidate_count": len(
-                        candidates
+                    "javascript_preview": (
+                        javascript_text[:10000]
                     ),
-                    "candidates": (
-                        candidates
+                    "clues": (
+                        find_javascript_clues(
+                            javascript_text
+                        )
+                    ),
+                    "relevant_strings": (
+                        extract_javascript_string_values(
+                            javascript_text
+                        )
                     ),
                     "error": (
                         None
-                        if (
-                            response.status_code
-                            == 200
-                        )
+                        if response.status_code == 200
                         else (
-                            "Detail page returned "
-                            "HTTP "
-                            f"{response.status_code}."
+                            "JavaScript request returned "
+                            f"HTTP {response.status_code}."
                         )
                     ),
                 }
             )
 
         except Exception as error:
-            page_results.append(
+            script_results.append(
                 {
-                    "page_number": (
-                        page_number
+                    "script_reference": (
+                        script_reference
                     ),
-                    "requested_url": (
-                        detail_url
-                    ),
-                    "final_url": None,
+                    "script_url": script_url,
                     "status_code": None,
                     "content_type": None,
-                    "response_size": 0,
-                    "candidate_count": 0,
-                    "candidates": [],
+                    "content_length": 0,
+                    "javascript_preview": "",
+                    "clues": [],
+                    "relevant_strings": [],
                     "error": str(error),
                 }
             )
 
-    unique_candidates = []
-    seen_candidates = set()
+    return script_results
 
-    for candidate in all_candidates:
-        candidate_value = (
-            normalise_text(
-                candidate.get(
-                    "value"
-                )
-            )
-        )
 
-        if not candidate_value:
-            continue
-
-        key = (
-            candidate_value.lower()
-        )
-
-        if key in seen_candidates:
-            continue
-
-        seen_candidates.add(
-            key
-        )
-
-        unique_candidates.append(
-            candidate
-        )
-
-    successful_page_count = sum(
-        1
-        for item in page_results
-        if (
-            item.get(
-                "status_code"
-            )
-            == 200
-        )
+# --------------------------------------------------
+# ANALYSE PUBLISHED DOSSIER INDEX
+# --------------------------------------------------
+def analyse_published_dossier_index(
+    session,
+    index_url,
+    index_html,
+):
+    parsed_index = parse_index_html(
+        index_html
     )
 
-    failed_page_count = sum(
-        1
-        for item in page_results
-        if (
-            item.get(
-                "status_code"
-            )
-            != 200
+    route_links = []
+
+    for link in parsed_index["links"]:
+        href = normalise_text(
+            link.get("href")
         )
+
+        if looks_like_dossier_route_id(
+            href
+        ):
+            contexts = extract_contexts(
+                source_text=index_html,
+                search_value=href,
+                context_characters=500,
+                maximum_matches=3,
+            )
+
+            route_links.append(
+                {
+                    **link,
+                    "html_context": (
+                        contexts[0]
+                        if contexts
+                        else ""
+                    ),
+                }
+            )
+
+    script_results = fetch_index_scripts(
+        session=session,
+        index_url=index_url,
+        script_references=(
+            parsed_index["scripts"]
+        ),
     )
 
     return {
-        "href_count": len(
-            link_diagnostics[
-                "all_hrefs"
+        "parse_error": (
+            parsed_index[
+                "parse_error"
             ]
         ),
-        "href_preview": (
-            link_diagnostics[
-                "all_hrefs"
-            ][:100]
+        "all_links": (
+            parsed_index[
+                "links"
+            ]
         ),
-        "script_count": len(
-            link_diagnostics[
+        "script_references": (
+            parsed_index[
                 "scripts"
             ]
         ),
-        "script_preview": (
-            link_diagnostics[
-                "scripts"
-            ][:50]
-        ),
-        "ignored_asset_href_count": (
-            len(
-                link_diagnostics[
-                    "ignored_asset_hrefs"
-                ]
-            )
-        ),
-        "internal_link_count": len(
-            internal_links
-        ),
-        "internal_link_preview": (
-            internal_links[:100]
-        ),
-        "tested_page_count": len(
-            links_to_test
-        ),
-        "successful_page_count": (
-            successful_page_count
-        ),
-        "failed_page_count": (
-            failed_page_count
-        ),
-        "page_results": page_results,
-        "registrant_candidates": (
-            unique_candidates
-        ),
+        "route_links": route_links,
+        "script_results": script_results,
     }
 
 
@@ -1503,16 +1035,13 @@ def get_published_dossier(
     asset_external_id,
     rml_id=None,
 ):
-    asset_external_id = (
-        normalise_text(
-            asset_external_id
-        )
+    asset_external_id = normalise_text(
+        asset_external_id
     )
 
     if not asset_external_id:
         raise RuntimeError(
-            "The assetExternalId "
-            "is empty."
+            "The assetExternalId is empty."
         )
 
     endpoint = (
@@ -1524,14 +1053,14 @@ def get_published_dossier(
         )
     )
 
+    referer = ECHA_BASE_URL
+
     if rml_id:
         referer = (
             f"{ECHA_BASE_URL}/"
             f"{normalise_text(rml_id)}"
             f"/overview"
         )
-    else:
-        referer = ECHA_BASE_URL
 
     response = execute_echa_request(
         session=session,
@@ -1547,43 +1076,26 @@ def get_published_dossier(
         },
     )
 
-    response_text = response.text
-
-    searchable_text = (
-        html_to_searchable_text(
-            response_text
-        )
-    )
-
-    detail_scan = {
-        "href_count": 0,
-        "href_preview": [],
-        "script_count": 0,
-        "script_preview": [],
-        "ignored_asset_href_count": 0,
-        "internal_link_count": 0,
-        "internal_link_preview": [],
-        "tested_page_count": 0,
-        "successful_page_count": 0,
-        "failed_page_count": 0,
-        "page_results": [],
-        "registrant_candidates": [],
+    analysis = {
+        "parse_error": None,
+        "all_links": [],
+        "script_references": [],
+        "route_links": [],
+        "script_results": [],
     }
 
     if response.status_code == 200:
-        detail_scan = (
-            scan_published_dossier_pages(
+        analysis = (
+            analyse_published_dossier_index(
                 session=session,
                 index_url=response.url,
-                index_html=response_text,
-                rml_id=rml_id,
+                index_html=response.text,
             )
         )
 
     return {
         "success": (
-            response.status_code
-            == 200
+            response.status_code == 200
         ),
         "status_code": (
             response.status_code
@@ -1600,23 +1112,10 @@ def get_published_dossier(
         "content_length": len(
             response.content
         ),
-        "html_length": len(
-            response_text
+        "index_html_preview": (
+            response.text[:15000]
         ),
-        "searchable_text_length": len(
-            searchable_text
-        ),
-        "text_preview": (
-            searchable_text[:5000]
-        ),
-        "detail_scan": (
-            detail_scan
-        ),
-        "registrant_candidates": (
-            detail_scan[
-                "registrant_candidates"
-            ]
-        ),
+        "analysis": analysis,
         "error": (
             None
             if response.status_code == 200
@@ -1625,7 +1124,7 @@ def get_published_dossier(
                 "returned HTTP "
                 f"{response.status_code}. "
                 f"Response: "
-                f"{response_text[:1000]}"
+                f"{response.text[:1000]}"
             )
         ),
     }
@@ -1647,41 +1146,34 @@ def run_test(cas_number):
         flush=True,
     )
 
-    dataframe = (
-        load_echa_data()
-    )
+    dataframe = load_echa_data()
 
-    local_results = (
-        find_substance_by_cas(
-            dataframe=dataframe,
-            cas_number=cas_number,
-        )
+    local_results = find_substance_by_cas(
+        dataframe=dataframe,
+        cas_number=cas_number,
     )
 
     if not local_results:
         raise RuntimeError(
-            f"CAS {cas_number} was "
-            "not found in "
+            f"CAS {cas_number} was not found in "
             "reach_registrations.xlsx."
         )
 
     selected = local_results[0]
 
-    if not selected["rml_id"]:
-        raise RuntimeError(
-            "The ECHA rmlId could "
-            "not be extracted from "
-            f"this URL: "
-            f"{selected['echa_url']}"
-        )
-
-    session = (
-        create_http_session()
+    print(
+        f"ECHA local match: {selected}",
+        flush=True,
     )
 
-    # -----------------------------
-    # SUBSTANCE
-    # -----------------------------
+    if not selected["rml_id"]:
+        raise RuntimeError(
+            "The ECHA rmlId could not be extracted "
+            f"from this URL: {selected['echa_url']}"
+        )
+
+    session = create_http_session()
+
     substance_result = None
     substance_error = None
 
@@ -1689,22 +1181,13 @@ def run_test(cas_number):
         substance_result = (
             get_substance_identity(
                 session=session,
-                rml_id=(
-                    selected[
-                        "rml_id"
-                    ]
-                ),
+                rml_id=selected["rml_id"],
             )
         )
 
     except Exception as error:
-        substance_error = (
-            str(error)
-        )
+        substance_error = str(error)
 
-    # -----------------------------
-    # DOSSIERS
-    # -----------------------------
     dossier_attempts = []
 
     for status in (
@@ -1712,19 +1195,23 @@ def run_test(cas_number):
         "Active",
         "Inactive",
     ):
+        request_params = {
+            "pageIndex": 1,
+            "pageSize": 100,
+            "rmlId": selected["rml_id"],
+            "legislation": "REACH",
+        }
+
+        if status:
+            request_params[
+                "registrationStatuses"
+            ] = status
+
         try:
-            result = (
-                get_reach_dossiers(
-                    session=session,
-                    rml_id=(
-                        selected[
-                            "rml_id"
-                        ]
-                    ),
-                    registration_status=(
-                        status
-                    ),
-                )
+            result = get_reach_dossiers(
+                session=session,
+                rml_id=selected["rml_id"],
+                registration_status=status,
             )
 
             items = extract_items(
@@ -1743,24 +1230,16 @@ def run_test(cas_number):
                             "status_code"
                         ]
                     ),
-                    "url": (
-                        result[
-                            "url"
-                        ]
-                    ),
+                    "url": result["url"],
                     "params": (
-                        result[
-                            "params"
-                        ]
+                        result["params"]
                     ),
-                    "item_count": (
-                        len(items)
+                    "item_count": len(
+                        items
                     ),
                     "items": items,
                     "raw_body": (
-                        result[
-                            "body"
-                        ]
+                        result["body"]
                     ),
                     "error": None,
                 }
@@ -1776,7 +1255,7 @@ def run_test(cas_number):
                     "success": False,
                     "status_code": None,
                     "url": None,
-                    "params": {},
+                    "params": request_params,
                     "item_count": 0,
                     "items": [],
                     "raw_body": None,
@@ -1784,9 +1263,6 @@ def run_test(cas_number):
                 }
             )
 
-    # -----------------------------
-    # PUBLISHED DOSSIER
-    # -----------------------------
     published_dossier_test = None
 
     first_active_dossier = (
@@ -1812,9 +1288,7 @@ def run_test(cas_number):
                         asset_external_id
                     ),
                     rml_id=(
-                        selected[
-                            "rml_id"
-                        ]
+                        selected["rml_id"]
                     ),
                 )
             )
@@ -1850,8 +1324,16 @@ def run_test(cas_number):
                 "success": False,
                 "status_code": None,
                 "url": None,
-                "detail_scan": {},
-                "registrant_candidates": [],
+                "content_type": None,
+                "content_length": 0,
+                "index_html_preview": "",
+                "analysis": {
+                    "parse_error": None,
+                    "all_links": [],
+                    "script_references": [],
+                    "route_links": [],
+                    "script_results": [],
+                },
                 "error": str(error),
             }
 
@@ -1885,10 +1367,10 @@ st.caption(
 )
 
 st.write(
-    "This test uses the local ECHA registrations "
-    "export to resolve a CAS number to an ECHA "
-    "rmlId, then queries the substance, dossier-list "
-    "and first active published dossier."
+    "This test resolves a CAS number through the local "
+    "ECHA export, queries the substance and dossier-list "
+    "APIs, and analyses the JavaScript used by the "
+    "published dossier."
 )
 
 st.caption(
@@ -1898,9 +1380,7 @@ st.caption(
 cas_number = st.text_input(
     "CAS number",
     value="128-37-0",
-    placeholder=(
-        "For example: 128-37-0"
-    ),
+    placeholder="For example: 128-37-0",
 )
 
 run_button = st.button(
@@ -1910,10 +1390,8 @@ run_button = st.button(
 
 
 if run_button:
-    cleaned_cas = (
-        normalise_text(
-            cas_number
-        )
+    cleaned_cas = normalise_text(
+        cas_number
     )
 
     if not looks_like_cas_number(
@@ -1926,14 +1404,12 @@ if run_button:
 
     else:
         with st.spinner(
-            "Testing ECHA and scanning "
-            "the first active dossier..."
+            "Testing ECHA and analysing "
+            "the published dossier scripts..."
         ):
             try:
-                test_result = (
-                    run_test(
-                        cleaned_cas
-                    )
+                test_result = run_test(
+                    cleaned_cas
                 )
 
             except Exception as error:
@@ -1948,45 +1424,37 @@ if run_button:
             "ECHA API test completed."
         )
 
-        substance = (
-            test_result[
-                "local_substance"
-            ]
-        )
+        substance = test_result[
+            "local_substance"
+        ]
 
         # ----------------------------------
-        # 1. LOCAL MATCH
+        # 1. LOCAL SUBSTANCE
         # ----------------------------------
         st.subheader(
             "1. Local substance match"
         )
 
-        col1, col2, col3 = (
-            st.columns(3)
+        col1, col2, col3 = st.columns(
+            3
         )
 
         col1.metric(
             "CAS number",
-            substance[
-                "cas_number"
-            ],
+            substance["cas_number"],
         )
 
         col2.metric(
             "EC number",
             (
-                substance[
-                    "ec_number"
-                ]
+                substance["ec_number"]
                 or "Not available"
             ),
         )
 
         col3.metric(
             "ECHA rmlId",
-            substance[
-                "rml_id"
-            ],
+            substance["rml_id"],
         )
 
         st.write(
@@ -2022,19 +1490,16 @@ if run_button:
             )
 
             substance_body = (
-                substance_api[
-                    "body"
-                ]
+                substance_api["body"]
             )
 
             if isinstance(
                 substance_body,
                 dict,
             ):
-                (
-                    summary1,
-                    summary2,
-                ) = st.columns(2)
+                summary1, summary2 = (
+                    st.columns(2)
+                )
 
                 participation = (
                     substance_body.get(
@@ -2092,11 +1557,9 @@ if run_button:
             "3. REACH dossier API"
         )
 
-        for attempt in (
-            test_result[
-                "dossier_attempts"
-            ]
-        ):
+        for attempt in test_result[
+            "dossier_attempts"
+        ]:
             with st.expander(
                 (
                     "Registration status: "
@@ -2114,9 +1577,7 @@ if run_button:
                 )
 
                 st.json(
-                    attempt[
-                        "params"
-                    ]
+                    attempt["params"]
                 )
 
                 if attempt["url"]:
@@ -2125,15 +1586,11 @@ if run_button:
                     )
 
                     st.code(
-                        attempt[
-                            "url"
-                        ],
+                        attempt["url"],
                         language=None,
                     )
 
-                if attempt[
-                    "success"
-                ]:
+                if attempt["success"]:
                     st.success(
                         "HTTP "
                         f"{attempt['status_code']} | "
@@ -2141,14 +1598,10 @@ if run_button:
                         "dossier item(s)"
                     )
 
-                    if attempt[
-                        "items"
-                    ]:
+                    if attempt["items"]:
                         st.dataframe(
                             pd.json_normalize(
-                                attempt[
-                                    "items"
-                                ]
+                                attempt["items"]
                             ),
                             width="stretch",
                             hide_index=True,
@@ -2166,23 +1619,18 @@ if run_button:
 
                 else:
                     st.error(
-                        attempt[
-                            "error"
-                        ]
+                        attempt["error"]
                     )
 
         # ----------------------------------
         # 4. PUBLISHED DOSSIER
         # ----------------------------------
         st.subheader(
-            "4. Published dossier and "
-            "registrant scan"
+            "4. Published dossier route analysis"
         )
 
-        published_test = (
-            test_result.get(
-                "published_dossier_test"
-            )
+        published_test = test_result.get(
+            "published_dossier_test"
         )
 
         if not published_test:
@@ -2192,10 +1640,9 @@ if run_button:
             )
 
         else:
-            (
-                detail1,
-                detail2,
-            ) = st.columns(2)
+            detail1, detail2 = st.columns(
+                2
+            )
 
             detail1.metric(
                 "assetExternalId",
@@ -2217,17 +1664,13 @@ if run_button:
                 ),
             )
 
-            if published_test.get(
-                "url"
-            ):
+            if published_test.get("url"):
                 st.markdown(
                     "**Published dossier URL**"
                 )
 
                 st.code(
-                    published_test[
-                        "url"
-                    ],
+                    published_test["url"],
                     language=None,
                 )
 
@@ -2249,298 +1692,293 @@ if run_button:
                     "Published dossier test failed."
                 )
 
-            detail_scan = (
-                published_test.get(
-                    "detail_scan",
-                    {},
-                )
+            analysis = published_test.get(
+                "analysis",
+                {},
             )
 
-            registrant_candidates = (
-                published_test.get(
-                    "registrant_candidates",
+            all_links = analysis.get(
+                "all_links",
+                [],
+            )
+
+            route_links = analysis.get(
+                "route_links",
+                [],
+            )
+
+            script_references = (
+                analysis.get(
+                    "script_references",
                     [],
                 )
             )
 
-            st.markdown(
-                "### Published dossier "
-                "detail scan"
+            script_results = analysis.get(
+                "script_results",
+                [],
             )
 
-            (
-                scan1,
-                scan2,
-                scan3,
-                scan4,
-                scan5,
-            ) = st.columns(5)
-
-            scan1.metric(
-                "All href values",
-                detail_scan.get(
-                    "href_count",
-                    0,
-                ),
+            metric1, metric2, metric3 = (
+                st.columns(3)
             )
 
-            scan2.metric(
-                "Internal detail links",
-                detail_scan.get(
-                    "internal_link_count",
-                    0,
-                ),
+            metric1.metric(
+                "All HTML links",
+                len(all_links),
             )
 
-            scan3.metric(
-                "Detail pages tested",
-                detail_scan.get(
-                    "tested_page_count",
-                    0,
-                ),
+            metric2.metric(
+                "Dossier route identifiers",
+                len(route_links),
             )
 
-            scan4.metric(
-                "Successful pages",
-                detail_scan.get(
-                    "successful_page_count",
-                    0,
-                ),
-            )
-
-            scan5.metric(
-                "Registrant candidates",
-                len(
-                    registrant_candidates
-                ),
+            metric3.metric(
+                "JavaScript files",
+                len(script_results),
             )
 
             # ----------------------------------
-            # V6 INDEX DIAGNOSTICS
+            # ROUTE IDENTIFIERS
             # ----------------------------------
             with st.expander(
-                "Index-link diagnostics",
-                expanded=(
-                    detail_scan.get(
-                        "internal_link_count",
-                        0,
-                    )
-                    == 0
-                ),
+                "Dossier route identifiers",
+                expanded=False,
             ):
-                st.markdown(
-                    "**All href values found "
-                    "in index.html**"
-                )
+                if route_links:
+                    route_table = []
 
-                st.json(
-                    detail_scan.get(
-                        "href_preview",
-                        [],
-                    )
-                )
-
-                st.markdown(
-                    "**Script files found "
-                    "in index.html**"
-                )
-
-                st.json(
-                    detail_scan.get(
-                        "script_preview",
-                        [],
-                    )
-                )
-
-                st.markdown(
-                    "**Internal dossier links "
-                    "selected for testing**"
-                )
-
-                st.json(
-                    detail_scan.get(
-                        "internal_link_preview",
-                        [],
-                    )
-                )
-
-            # ----------------------------------
-            # REGISTRANT RESULTS
-            # ----------------------------------
-            if registrant_candidates:
-                st.success(
-                    "Possible registrant or "
-                    "legal-entity information "
-                    "was found."
-                )
-
-                st.dataframe(
-                    pd.DataFrame(
-                        registrant_candidates
-                    ),
-                    width="stretch",
-                    hide_index=True,
-                )
-
-                registrant_names = list(
-                    dict.fromkeys(
-                        candidate[
-                            "value"
-                        ]
-                        for candidate
-                        in registrant_candidates
-                        if candidate.get(
-                            "value"
+                    for route_link in route_links:
+                        route_table.append(
+                            {
+                                "href": (
+                                    route_link.get(
+                                        "href"
+                                    )
+                                ),
+                                "target": (
+                                    route_link.get(
+                                        "target"
+                                    )
+                                ),
+                                "onclick": (
+                                    route_link.get(
+                                        "onclick"
+                                    )
+                                ),
+                                "class": (
+                                    route_link.get(
+                                        "class"
+                                    )
+                                ),
+                                "data_target": (
+                                    route_link.get(
+                                        "data_target"
+                                    )
+                                ),
+                                "data_id": (
+                                    route_link.get(
+                                        "data_id"
+                                    )
+                                ),
+                            }
                         )
-                    )
-                )
 
-                st.markdown(
-                    "### Possible "
-                    "registrant names"
-                )
-
-                for registrant_name in (
-                    registrant_names
-                ):
-                    st.write(
-                        f"- {registrant_name}"
-                    )
-
-            else:
-                href_count = (
-                    detail_scan.get(
-                        "href_count",
-                        0,
-                    )
-                )
-
-                internal_link_count = (
-                    detail_scan.get(
-                        "internal_link_count",
-                        0,
-                    )
-                )
-
-                successful_pages = (
-                    detail_scan.get(
-                        "successful_page_count",
-                        0,
-                    )
-                )
-
-                if href_count == 0:
-                    st.warning(
-                        "The index page contains "
-                        "no href values. The dossier "
-                        "navigation may be generated "
-                        "through JavaScript or another "
-                        "manifest."
-                    )
-
-                elif internal_link_count == 0:
-                    st.warning(
-                        "The index page contains "
-                        "href values, but none were "
-                        "identified as dossier detail "
-                        "links. Check the Index-link "
-                        "diagnostics below."
-                    )
-
-                elif successful_pages == 0:
-                    st.warning(
-                        "Internal detail links were "
-                        "found, but none returned "
-                        "HTTP 200."
-                    )
-
-                else:
-                    st.warning(
-                        "The detail pages were "
-                        "retrieved, but no public "
-                        "registrant or legal-entity "
-                        "name was found."
-                    )
-
-            # ----------------------------------
-            # DETAIL-PAGE DIAGNOSTICS
-            # ----------------------------------
-            page_results = (
-                detail_scan.get(
-                    "page_results",
-                    [],
-                )
-            )
-
-            if page_results:
-                diagnostics = []
-
-                for item in page_results:
-                    diagnostics.append(
-                        {
-                            "page": (
-                                item.get(
-                                    "page_number"
-                                )
-                            ),
-                            "status": (
-                                item.get(
-                                    "status_code"
-                                )
-                            ),
-                            "size": (
-                                item.get(
-                                    "response_size"
-                                )
-                            ),
-                            "candidates": (
-                                item.get(
-                                    "candidate_count"
-                                )
-                            ),
-                            "url": (
-                                item.get(
-                                    "final_url"
-                                )
-                                or
-                                item.get(
-                                    "requested_url"
-                                )
-                            ),
-                            "error": (
-                                item.get(
-                                    "error"
-                                )
-                            ),
-                        }
-                    )
-
-                with st.expander(
-                    "Published detail-page "
-                    "diagnostics",
-                    expanded=False,
-                ):
                     st.dataframe(
                         pd.DataFrame(
-                            diagnostics
+                            route_table
                         ),
                         width="stretch",
                         hide_index=True,
                     )
 
+                else:
+                    st.warning(
+                        "No dossier route identifiers "
+                        "were found."
+                    )
+
             # ----------------------------------
-            # TEXT PREVIEW
+            # HTML CONTEXT
             # ----------------------------------
             with st.expander(
-                "Published dossier "
-                "text preview",
+                "HTML context around first route",
                 expanded=False,
             ):
-                st.text(
+                if route_links:
+                    st.code(
+                        route_links[0].get(
+                            "html_context"
+                        )
+                        or
+                        "No context available.",
+                        language="html",
+                    )
+
+                else:
+                    st.text(
+                        "No route context available."
+                    )
+
+            # ----------------------------------
+            # SCRIPT REFERENCES
+            # ----------------------------------
+            with st.expander(
+                "JavaScript references",
+                expanded=False,
+            ):
+                st.json(
+                    script_references
+                )
+
+            # ----------------------------------
+            # JAVASCRIPT RESULTS
+            # ----------------------------------
+            st.markdown(
+                "### JavaScript route diagnostics"
+            )
+
+            if not script_results:
+                st.warning(
+                    "No JavaScript files were found."
+                )
+
+            for script_result in script_results:
+                script_name = (
+                    script_result.get(
+                        "script_reference"
+                    )
+                    or "Unknown script"
+                )
+
+                with st.expander(
+                    script_name,
+                    expanded=(
+                        script_name.endswith(
+                            "index.js"
+                        )
+                    ),
+                ):
+                    if script_result.get(
+                        "error"
+                    ):
+                        st.error(
+                            script_result[
+                                "error"
+                            ]
+                        )
+
+                    else:
+                        script_col1, script_col2 = (
+                            st.columns(2)
+                        )
+
+                        script_col1.metric(
+                            "HTTP status",
+                            script_result.get(
+                                "status_code"
+                            ),
+                        )
+
+                        script_col2.metric(
+                            "Response size",
+                            script_result.get(
+                                "content_length"
+                            ),
+                        )
+
+                    st.markdown(
+                        "**Script URL**"
+                    )
+
+                    st.code(
+                        script_result.get(
+                            "script_url"
+                        )
+                        or
+                        "Not available",
+                        language=None,
+                    )
+
+                    st.markdown(
+                        "**Relevant JavaScript strings**"
+                    )
+
+                    st.json(
+                        script_result.get(
+                            "relevant_strings",
+                            [],
+                        )
+                    )
+
+                    clues = script_result.get(
+                        "clues",
+                        [],
+                    )
+
+                    st.markdown(
+                        "**Route-related code contexts**"
+                    )
+
+                    if clues:
+                        clue_table = []
+
+                        for clue in clues:
+                            clue_table.append(
+                                {
+                                    "term": (
+                                        clue.get(
+                                            "term"
+                                        )
+                                    ),
+                                    "context": (
+                                        clue.get(
+                                            "context"
+                                        )
+                                    ),
+                                }
+                            )
+
+                        st.dataframe(
+                            pd.DataFrame(
+                                clue_table
+                            ),
+                            width="stretch",
+                            hide_index=True,
+                        )
+
+                    else:
+                        st.info(
+                            "No route-related terms "
+                            "were found in this script."
+                        )
+
+                    with st.expander(
+                        "JavaScript source preview",
+                        expanded=False,
+                    ):
+                        st.code(
+                            script_result.get(
+                                "javascript_preview"
+                            )
+                            or
+                            "No JavaScript source "
+                            "was returned.",
+                            language="javascript",
+                        )
+
+            # ----------------------------------
+            # INDEX PREVIEW
+            # ----------------------------------
+            with st.expander(
+                "Published index HTML preview",
+                expanded=False,
+            ):
+                st.code(
                     published_test.get(
-                        "text_preview"
+                        "index_html_preview"
                     )
                     or
-                    "No searchable text "
-                    "was returned."
+                    "No index HTML was returned.",
+                    language="html",
                 )
