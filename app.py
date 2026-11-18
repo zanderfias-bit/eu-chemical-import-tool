@@ -44,14 +44,8 @@ st.write(
 # ECHA API CONFIGURATION
 # --------------------------------------------------
 ECHA_BASE_URL = "https://chem.echa.europa.eu"
-
-SUBSTANCE_SEARCH_API_URL = (
-    f"{ECHA_BASE_URL}/api-substance/v1/substance"
-)
-
-REGISTRANTS_API_URL = (
-    f"{ECHA_BASE_URL}/api-registrants/v1/registrants"
-)
+SUBSTANCE_SEARCH_API_URL = f"{ECHA_BASE_URL}/api-substance/v1/substance"
+REGISTRANTS_API_URL = f"{ECHA_BASE_URL}/api-registrants/v1/registrants"
 
 CONNECT_TIMEOUT_SECONDS = 20
 READ_TIMEOUT_SECONDS = 90
@@ -74,14 +68,7 @@ def clean_text(value):
     if value is None:
         return ""
 
-    if isinstance(
-        value,
-        (
-            dict,
-            list,
-            tuple,
-        ),
-    ):
+    if isinstance(value, (dict, list, tuple)):
         return json.dumps(
             value,
             ensure_ascii=False,
@@ -99,6 +86,55 @@ def clean_text(value):
 
     return " ".join(
         text.split()
+    )
+
+
+def clean_identifier(value):
+    """
+    Format CAS and EC identifiers without
+    JSON list brackets or quotation marks.
+    """
+    if value is None:
+        return ""
+
+    if isinstance(
+        value,
+        (
+            list,
+            tuple,
+            set,
+        ),
+    ):
+        cleaned_values = []
+
+        for item in value:
+            cleaned_item = clean_identifier(
+                item
+            )
+
+            if (
+                cleaned_item
+                and
+                cleaned_item not in cleaned_values
+            ):
+                cleaned_values.append(
+                    cleaned_item
+                )
+
+        return ", ".join(
+            cleaned_values
+        )
+
+    if isinstance(
+        value,
+        dict,
+    ):
+        return clean_text(
+            value
+        )
+
+    return clean_text(
+        value
     )
 
 
@@ -132,7 +168,9 @@ def create_echa_session():
             504,
         ),
         allowed_methods=frozenset(
-            {"GET"}
+            {
+                "GET",
+            }
         ),
         respect_retry_after_header=True,
         raise_on_status=False,
@@ -209,7 +247,9 @@ def echa_get(
     }
 
 
-def extract_items(response_json):
+def extract_items(
+    response_json,
+):
     if not isinstance(
         response_json,
         dict,
@@ -230,7 +270,9 @@ def extract_items(response_json):
     return items
 
 
-def extract_state(response_json):
+def extract_state(
+    response_json,
+):
     if not isinstance(
         response_json,
         dict,
@@ -316,7 +358,9 @@ def find_first_field(
 # --------------------------------------------------
 # ECHA SUBSTANCE SEARCH
 # --------------------------------------------------
-def normalise_substance(item):
+def normalise_substance(
+    item,
+):
     if not isinstance(
         item,
         dict,
@@ -348,7 +392,9 @@ def normalise_substance(item):
         or
         find_first_field(
             item,
-            {"rmlId"},
+            {
+                "rmlId",
+            },
         )
     )
 
@@ -425,12 +471,12 @@ def normalise_substance(item):
             )
         ),
         "EC Number": (
-            clean_text(
+            clean_identifier(
                 ec_number
             )
         ),
         "CAS Number": (
-            clean_text(
+            clean_identifier(
                 cas_number
             )
         ),
@@ -624,7 +670,9 @@ def search_echa_api(
 # --------------------------------------------------
 # ECHA REGISTRANTS
 # --------------------------------------------------
-def normalise_registrant(item):
+def normalise_registrant(
+    item,
+):
     if not isinstance(
         item,
         dict,
@@ -1390,8 +1438,7 @@ if search_results:
             selected_row[
                 "Name"
             ]
-            or
-            "Unknown"
+            or "Unknown"
         ),
     )
 
@@ -1401,8 +1448,7 @@ if search_results:
             selected_row[
                 "EC Number"
             ]
-            or
-            "Unknown"
+            or "Unknown"
         ),
     )
 
@@ -1412,8 +1458,7 @@ if search_results:
             selected_row[
                 "CAS Number"
             ]
-            or
-            "Unknown"
+            or "Unknown"
         ),
     )
 
@@ -1423,8 +1468,7 @@ if search_results:
             selected_row[
                 "rmlId"
             ]
-            or
-            "Unknown"
+            or "Unknown"
         ),
     )
 
@@ -1929,8 +1973,8 @@ if (
 
         except Exception as error:
             st.error(
-                "Purchase history lookup "
-                f"failed: {error}"
+                "Purchase history lookup failed: "
+                f"{error}"
             )
 
             purchase_info = None
@@ -1968,8 +2012,7 @@ if (
                     st.columns(2)
                 )
 
-                with purchase_columns[0]:
-                    last_purchase_date = (
+                with purchase_columnslast_purchase_date = (
                         purchase_info.get(
                             "last_purchase_date"
                         )
@@ -1978,23 +2021,7 @@ if (
                     st.write(
                         "**Last purchase date:**",
                         (
-                            last_purchase_date.strftime("%d/%m/%Y")
-                            if pd.notna(last_purchase_date)
-                            else "-"
-                        ),
-                    )
-
-                    st.write(
-                        "**Supplier on last purchase:**",
-                        supplier_text,
-                    )
-
-
-                    st.write(
-                        "**Last purchase date:**",
-                        (
-                            last_purchase_date
-                            .strftime(
+                            last_purchase_date.strftime(
                                 "%d/%m/%Y"
                             )
                             if pd.notna(
@@ -2005,8 +2032,7 @@ if (
                     )
 
                     st.write(
-                        "**Supplier on "
-                        "last purchase:**",
+                        "**Supplier on last purchase:**",
                         supplier_text,
                     )
 
@@ -2063,8 +2089,7 @@ if (
 
                 latest_columns = [
                     column
-                    for column
-                    in latest_columns
+                    for column in latest_columns
                     if column
                     in latest_purchases.columns
                 ]
@@ -2096,8 +2121,7 @@ if (
                 )
 
                 with st.expander(
-                    "View complete "
-                    "purchase history"
+                    "View complete purchase history"
                 ):
                     history = (
                         purchase_info[
@@ -2118,8 +2142,7 @@ if (
 
                     history_columns = [
                         column
-                        for column
-                        in history_columns
+                        for column in history_columns
                         if column
                         in history.columns
                     ]
@@ -2162,10 +2185,7 @@ if (
                 st.info(
                     purchase_info.get(
                         "message",
-                        (
-                            "No purchase "
-                            "history found."
-                        ),
+                        "No purchase history found.",
                     )
                 )
 
@@ -2247,8 +2267,8 @@ if (
 
         except Exception as error:
             st.error(
-                "Sales history lookup "
-                f"failed: {error}"
+                "Sales history lookup failed: "
+                f"{error}"
             )
 
             sales_info = None
@@ -2281,8 +2301,7 @@ if (
                     st.columns(2)
                 )
 
-                with sales_columns[0]:
-                    sales_date = (
+                with sales_columnssales_date = (
                         latest_sale.get(
                             "sales_date"
                         )
@@ -2291,25 +2310,7 @@ if (
                     st.write(
                         "**Date:**",
                         (
-                            sales_date.strftime("%d/%m/%Y")
-                            if pd.notna(sales_date)
-                            else "-"
-                        ),
-                    )
-
-                    st.write(
-                        "**Sales Order:**",
-                        latest_sale.get(
-                            "sales_order",
-                            "-",
-                        ),
-                    )
-
-                    st.write(
-                        "**Date:**",
-                        (
-                            sales_date
-                            .strftime(
+                            sales_date.strftime(
                                 "%d/%m/%Y"
                             )
                             if pd.notna(
@@ -2362,8 +2363,7 @@ if (
 
                 history_columns = [
                     column
-                    for column
-                    in history_columns
+                    for column in history_columns
                     if column
                     in history.columns
                 ]
