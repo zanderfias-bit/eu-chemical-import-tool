@@ -1,6 +1,5 @@
 import json
 import re
-from urllib.parse import urljoin
 
 import pandas as pd
 import requests
@@ -13,7 +12,7 @@ from urllib3.util.retry import Retry
 # PAGE CONFIGURATION
 # --------------------------------------------------
 st.set_page_config(
-    page_title="ECHA Registrants API Test",
+    page_title="ECHA Registrants API Discovery",
     page_icon="🔎",
     layout="wide",
 )
@@ -22,7 +21,7 @@ st.set_page_config(
 # --------------------------------------------------
 # VERSION
 # --------------------------------------------------
-CODE_VERSION = "ECHA_REGISTRANTS_API_TEST_V11"
+CODE_VERSION = "ECHA_REGISTRANTS_API_DISCOVERY_V12"
 
 
 # --------------------------------------------------
@@ -31,7 +30,6 @@ CODE_VERSION = "ECHA_REGISTRANTS_API_TEST_V11"
 CAS_NUMBER = "128-37-0"
 EC_NUMBER = "204-881-4"
 RML_ID = "100.004.439"
-
 EXPECTED_REGISTRANTS = 42
 
 
@@ -66,6 +64,8 @@ READ_TIMEOUT_SECONDS = 90
 REQUEST_HEADERS = {
     "Accept": (
         "application/json,"
+        "application/javascript,"
+        "text/javascript,"
         "text/plain,"
         "*/*"
     ),
@@ -111,13 +111,11 @@ def create_session():
         raise_on_status=False,
     )
 
-    adapter = HTTPAdapter(
-        max_retries=retry
-    )
-
     session.mount(
         "https://",
-        adapter,
+        HTTPAdapter(
+            max_retries=retry
+        ),
     )
 
     return session
@@ -129,24 +127,20 @@ def create_session():
 def safe_get(
     session,
     url,
-    params=None,
     referer=None,
 ):
-    headers = {}
-
-    if referer:
-        headers[
-            "Referer"
-        ] = referer
+    headers = (
+        {
+            "Referer": referer
+        }
+        if referer
+        else None
+    )
 
     try:
         response = session.get(
             url,
-            params=params,
-            headers=(
-                headers
-                or None
-            ),
+            headers=headers,
             timeout=(
                 CONNECT_TIMEOUT_SECONDS,
                 READ_TIMEOUT_SECONDS,
@@ -186,869 +180,514 @@ def parse_json_response(
 
 
 # --------------------------------------------------
-# NORMALISE TEXT
+# CLEAN JAVASCRIPT
 # --------------------------------------------------
-def normalise_text(
-    value,
-):
-    if value is None:
-        return ""
-
-    if isinstance(
-        value,
-        (
-            dict,
-            list,
-            tuple,
-        ),
-    ):
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-        )
-
-    text = str(
-        value
-    ).strip()
-
-    if text.lower() in {
-        "",
-        "none",
-        "null",
-        "nan",
-    }:
-        return ""
-
-    return " ".join(
-        text.split()
-    )
-
-
-# --------------------------------------------------
-# RECURSIVE JSON KEY LOOKUP
-# --------------------------------------------------
-def find_json_key(
-    value,
-    wanted_key,
-):
-    wanted_key_lower = (
-        wanted_key.lower()
-    )
-
-    if isinstance(
-        value,
-        dict,
-    ):
-        for key, nested_value in (
-            value.items()
-        ):
-            if (
-                str(key).lower()
-                ==
-                wanted_key_lower
-            ):
-                return nested_value
-
-        for nested_value in (
-            value.values()
-        ):
-            result = find_json_key(
-                nested_value,
-                wanted_key,
-            )
-
-            if result is not None:
-                return result
-
-    elif isinstance(
-        value,
-        list,
-    ):
-        for item in value:
-            result = find_json_key(
-                item,
-                wanted_key,
-            )
-
-            if result is not None:
-                return result
-
-    return None
-
-
-# --------------------------------------------------
-# SOURCE CONTEXT
-# --------------------------------------------------
-def source_context(
+def clean_javascript(
     text,
-    search_text,
-    before=1000,
-    after=2500,
 ):
     if not text:
         return ""
 
-    position = (
-        text.lower()
-        .find(
-            search_text.lower()
+    return (
+        text
+        .replace(
+            "\\/",
+            "/",
+        )
+        .replace(
+            "\\u002F",
+            "/",
+        )
+        .replace(
+            "\\u002f",
+            "/",
         )
     )
 
-    if position < 0:
-        return ""
 
-    start = max(
+# --------------------------------------------------
+# GET SOURCE CONTEXT
+# --------------------------------------------------
+def get_context(
+    text,
+    start,
+    end,
+    before=1500,
+    after=4000,
+):
+    context_start = max(
         0,
-        position - before,
+        start - before,
     )
 
-    end = min(
+    context_end = min(
         len(text),
-        (
-            position
-            + len(search_text)
-            + after
-        ),
+        end + after,
     )
 
     return text[
-        start:end
+        context_start:
+        context_end
     ]
 
 
 # --------------------------------------------------
-# EXTRACT DEFAULT REGISTRANTS API BASE
+# FIND ALL CONTEXTS
 # --------------------------------------------------
-def extract_default_api_base(
-    javascript_text,
+def find_all_contexts(
+    text,
+    search_term,
+    before=1500,
+    after=4000,
 ):
-    if not javascript_text:
-        return ""
+    if not text:
+        return []
 
-    patterns = [
-        (
-            r'["\']'
-            r'([^"\']*/api-dossier-list/v\d+/)'
-            r'["\']'
-        ),
-        (
-            r'["\']'
-            r'(api-dossier-list/v\d+/)'
-            r'["\']'
-        ),
-    ]
-
-    for pattern in patterns:
-        match = re.search(
-            pattern,
-            javascript_text,
-            flags=re.IGNORECASE,
-        )
-
-        if not match:
-            continue
-
-        value = (
-            match.group(1)
-            .replace(
-                "\\/",
-                "/",
-            )
-            .strip()
-        )
-
-        if value:
-            return value
-
-    return ""
-
-
-# --------------------------------------------------
-# EXTRACT REGISTRANTS SUFFIX
-# --------------------------------------------------
-def extract_registrants_suffix(
-    javascript_text,
-):
-    result = {
-        "suffix": "",
-        "context": "",
-        "matched_expression": "",
-    }
-
-    if not javascript_text:
-        return result
-
-    patterns = [
-        (
-            r'registrantsUrl\s*='
-            r'\s*this\.registrantsApiUrl'
-            r'\.concat\(\s*'
-            r'["\']([^"\']+)["\']'
-            r'\s*\)'
-        ),
-        (
-            r'registrantsApiUrl'
-            r'[^;]{0,1000}?'
-            r'\.concat\(\s*'
-            r'["\']([^"\']+)["\']'
-            r'\s*\)'
-        ),
-    ]
-
-    for pattern in patterns:
-        match = re.search(
-            pattern,
-            javascript_text,
-            flags=re.IGNORECASE,
-        )
-
-        if not match:
-            continue
-
-        suffix = (
-            match.group(1)
-            .replace(
-                "\\/",
-                "/",
-            )
-            .strip()
-        )
-
-        if not suffix:
-            continue
-
-        result[
-            "suffix"
-        ] = suffix
-
-        result[
-            "matched_expression"
-        ] = (
-            match.group(0)
-        )
-
-        result[
-            "context"
-        ] = (
-            javascript_text[
-                max(
-                    0,
-                    match.start() - 1000,
-                ):
-                min(
-                    len(
-                        javascript_text
-                    ),
-                    match.end() + 2200,
-                )
-            ]
-        )
-
-        return result
-
-    result[
-        "context"
-    ] = source_context(
-        javascript_text,
-        "registrantsUrl",
+    lower_text = (
+        text.lower()
     )
 
-    return result
-
-
-# --------------------------------------------------
-# BUILD ABSOLUTE API BASE
-# --------------------------------------------------
-def build_absolute_api_base(
-    api_base,
-):
-    if not api_base:
-        return ""
-
-    clean_base = (
-        str(
-            api_base
-        )
-        .replace(
-            "\\/",
-            "/",
-        )
-        .strip()
+    lower_term = (
+        search_term.lower()
     )
 
-    absolute_base = urljoin(
-        (
-            ECHA_BASE_URL
-            + "/"
-        ),
-        clean_base,
-    )
+    contexts = []
+    start = 0
 
-    if not absolute_base.endswith(
-        "/"
-    ):
-        absolute_base += "/"
-
-    return absolute_base
-
-
-# -------------------------------------# BUILD REGISTRANTS ENDPOINT
-# --------------------------------------------------
-def build_registrants_endpoint(
-    api_base,
-    suffix,
-):
-    absolute_base = (
-        build_absolute_api_base(
-            api_base
+    while True:
+        position = lower_text.find(
+            lower_term,
+            start,
         )
-    )
 
-    if not absolute_base:
-        return ""
+        if position < 0:
+            break
 
-    if not suffix:
-        return ""
-
-    clean_suffix = (
-        str(
-            suffix
-        )
-        .replace(
-            "\\/",
-            "/",
-        )
-        .strip()
-        .lstrip(
-            "/"
-        )
-    )
-
-    if not clean_suffix:
-        return ""
-
-    return urljoin(
-        absolute_base,
-        clean_suffix,
-    )
-
-
-# --------------------------------------------------
-# FIND ALL LISTS IN JSON
-# --------------------------------------------------
-def find_json_lists(
-    value,
-    path="root",
-    results=None,
-):
-    if results is None:
-        results = []
-
-    if isinstance(
-        value,
-        list,
-    ):
-        results.append(
+        contexts.append(
             {
-                "path": (
-                    path
+                "term": (
+                    search_term
                 ),
-                "length": len(
-                    value
+                "position": (
+                    position
                 ),
-                "items": (
-                    value
+                "context": (
+                    get_context(
+                        text,
+                        position,
+                        position + len(
+                            search_term
+                        ),
+                        before=before,
+                        after=after,
+                    )
                 ),
             }
         )
 
-        for index, item in enumerate(
-            value
-        ):
-            find_json_lists(
-                value=item,
-                path=(
-                    f"{path}"
-                    f"[{index}]"
+        start = (
+            position
+            + len(search_term)
+        )
+
+        if len(
+            contexts
+        ) >= 20:
+            break
+
+    return contexts
+
+
+# --------------------------------------------------
+# EXTRACT REGISTRANTS API ASSIGNMENT
+# --------------------------------------------------
+def extract_registrants_assignment(
+    text,
+):
+    if not text:
+        return {
+            "full_assignment": "",
+            "fallback_expression": "",
+            "fallback_identifier": "",
+            "context": "",
+        }
+
+    patterns = [
+        re.compile(
+            (
+                r"registrantsApiUrl\s*=\s*"
+                r"(?P<runtime>"
+                r"[^;]{0,300}?"
+                r"registrantsApiUrl"
+                r")\s*\|\|\s*"
+                r"(?P<fallback>"
+                r"[^;]{1,1000}"
+                r")\s*;"
+            ),
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            (
+                r"registrantsApiUrl\s*=\s*"
+                r"(?P<runtime>"
+                r"[^;]{0,500}?"
+                r")\|\|"
+                r"(?P<fallback>"
+                r"[^;]{1,1000}"
+                r");"
+            ),
+            flags=re.IGNORECASE,
+        ),
+    ]
+
+    for pattern in patterns:
+        match = pattern.search(
+            text
+        )
+
+        if not match:
+            continue
+
+        fallback = (
+            match.group(
+                "fallback"
+            )
+            .strip()
+        )
+
+        identifier_match = (
+            re.fullmatch(
+                (
+                    r"(?:"
+                    r"[A-Za-z_$]"
+                    r"[A-Za-z0-9_$]*"
+                    r"\.)*"
+                    r"("
+                    r"[A-Za-z_$]"
+                    r"[A-Za-z0-9_$]*"
+                    r")"
                 ),
-                results=results,
+                fallback,
+            )
+        )
+
+        fallback_identifier = ""
+
+        if identifier_match:
+            fallback_identifier = (
+                identifier_match.group(
+                    1
+                )
             )
 
-    elif isinstance(
-        value,
-        dict,
-    ):
-        for key, nested_value in (
-            value.items()
-        ):
-            find_json_lists(
-                value=nested_value,
-                path=(
-                    f"{path}.{key}"
-                ),
-                results=results,
+        return {
+            "full_assignment": (
+                match.group(0)
+            ),
+            "fallback_expression": (
+                fallback
+            ),
+            "fallback_identifier": (
+                fallback_identifier
+            ),
+            "context": (
+                get_context(
+                    text,
+                    match.start(),
+                    match.end(),
+                )
+            ),
+        }
+
+    contexts = (
+        find_all_contexts(
+            text,
+            "registrantsApiUrl",
+        )
+    )
+
+    return {
+        "full_assignment": "",
+        "fallback_expression": "",
+        "fallback_identifier": "",
+        "context": (
+            contexts[0][
+                "context"
+            ]
+            if contexts
+            else ""
+        ),
+    }
+
+
+# --------------------------------------------------
+# EXTRACT REGISTRANTS URL ASSIGNMENT
+# --------------------------------------------------
+def extract_registrants_url_assignment(
+    text,
+):
+    if not text:
+        return {
+            "full_assignment": "",
+            "suffix": "",
+            "context": "",
+        }
+
+    pattern = re.compile(
+        (
+            r"registrantsUrl\s*=\s*"
+            r"this\.registrantsApiUrl"
+            r"\.concat\(\s*"
+            r"[\"']"
+            r"(?P<suffix>[^\"']+)"
+            r"[\"']"
+            r"\s*\)"
+        ),
+        flags=re.IGNORECASE,
+    )
+
+    match = pattern.search(
+        text
+    )
+
+    if not match:
+        contexts = (
+            find_all_contexts(
+                text,
+                "registrantsUrl",
             )
+        )
+
+        return {
+            "full_assignment": "",
+            "suffix": "",
+            "context": (
+                contexts[0][
+                    "context"
+                ]
+                if contexts
+                else ""
+            ),
+        }
+
+    return {
+        "full_assignment": (
+            match.group(0)
+        ),
+        "suffix": (
+            match.group(
+                "suffix"
+            )
+            .strip()
+        ),
+        "context": (
+            get_context(
+                text,
+                match.start(),
+                match.end(),
+            )
+        ),
+    }
+
+
+# --------------------------------------------------
+# EXTRACT RELEVANT STRING LITERALS
+# --------------------------------------------------
+def extract_api_literals(
+    text,
+):
+    if not text:
+        return []
+
+    patterns = [
+        (
+            r"[\"']"
+            r"([^\"']*"
+            r"api-dossier-list/v\d+/"
+            r"[^\"']*)"
+            r"[\"']"
+        ),
+        (
+            r"[\"']"
+            r"([^\"']*"
+            r"registrant"
+            r"[^\"']*)"
+            r"[\"']"
+        ),
+    ]
+
+    rows = []
+    seen = set()
+
+    for pattern in patterns:
+        matches = re.finditer(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        for match in matches:
+            value = (
+                match.group(1)
+                .strip()
+            )
+
+            if not value:
+                continue
+
+            if len(
+                value
+            ) > 1000:
+                continue
+
+            if value in seen:
+                continue
+
+            seen.add(
+                value
+            )
+
+            rows.append(
+                {
+                    "value": (
+                        value
+                    ),
+                    "position": (
+                        match.start()
+                    ),
+                    "context": (
+                        get_context(
+                            text,
+                            match.start(),
+                            match.end(),
+                            before=500,
+                            after=1200,
+                        )
+                    ),
+                }
+            )
+
+    return rows
+
+
+# --------------------------------------------------
+# FIND IDENTIFIER DEFINITIONS
+# --------------------------------------------------
+def find_identifier_definitions(
+    text,
+    identifier,
+):
+    if not text:
+        return []
+
+    if not identifier:
+        return []
+
+    escaped = re.escape(
+        identifier
+    )
+
+    patterns = [
+        re.compile(
+            (
+                rf"(?:var|let|const)"
+                rf"\s+{escaped}\s*=\s*"
+                rf"(?P<value>"
+                rf"[^;]{{1,1500}}"
+                rf");"
+            ),
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            (
+                rf"(?:^|[,;])\s*"
+                rf"{escaped}\s*=\s*"
+                rf"(?P<value>"
+                rf"[^;]{{1,1500}}"
+                rf");"
+            ),
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            (
+                rf"{escaped}\s*:\s*"
+                rf"(?P<value>"
+                rf"[^,}}]{{1,1200}}"
+                rf")"
+            ),
+            flags=re.IGNORECASE,
+        ),
+    ]
+
+    results = []
+    seen = set()
+
+    for pattern in patterns:
+        matches = pattern.finditer(
+            text
+        )
+
+        for match in matches:
+            value = (
+                match.group(
+                    "value"
+                )
+                .strip()
+            )
+
+            key = (
+                match.start(),
+                value,
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(
+                key
+            )
+
+            results.append(
+                {
+                    "identifier": (
+                        identifier
+                    ),
+                    "value_expression": (
+                        value
+                    ),
+                    "position": (
+                        match.start()
+                    ),
+                    "context": (
+                        get_context(
+                            text,
+                            match.start(),
+                            match.end(),
+                            before=1500,
+                            after=3000,
+                        )
+                    ),
+                }
+            )
+
+            if len(
+                results
+            ) >= 20:
+                return results
 
     return results
 
 
 # --------------------------------------------------
-# SCORE JSON LIST
+# RUN DISCOVERY
 # --------------------------------------------------
-def score_json_list(
-    candidate,
-):
-    items = candidate.get(
-        "items"
-    )
-
-    if not isinstance(
-        items,
-        list,
-    ):
-        return -1
-
-    if not items:
-        return 0
-
-    score = len(
-        items
-    )
-
-    relevant_keys = {
-        "name",
-        "address",
-        "status",
-        "registrantname",
-        "registrationstatus",
-        "assetownername",
-        "legalentityname",
-    }
-
-    dictionary_items = [
-        item
-        for item in items[:10]
-        if isinstance(
-            item,
-            dict,
-        )
-    ]
-
-    for item in dictionary_items:
-        keys = {
-            str(key).lower()
-            for key in item.keys()
-        }
-
-        score += (
-            len(
-                keys
-                & relevant_keys
-            )
-            * 20
-        )
-
-    candidate_path = (
-        candidate.get(
-            "path",
-            "",
-        )
-        .lower()
-    )
-
-    if any(
-        keyword in candidate_path
-        for keyword in (
-            "registrant",
-            "item",
-            "result",
-            "content",
-            "data",
-        )
-    ):
-        score += 50
-
-    return score
-
-
-# --------------------------------------------------
-# SELECT RESULT LIST
-# --------------------------------------------------
-def select_result_list(
-    json_body,
-):
-    if isinstance(
-        json_body,
-        list,
-    ):
-        return {
-            "path": (
-                "root"
-            ),
-            "items": (
-                json_body
-            ),
-        }
-
-    if not isinstance(
-        json_body,
-        (
-            dict,
-            list,
-        ),
-    ):
-        return {
-            "path": "",
-            "items": [],
-        }
-
-    # Common result structures first.
-    if isinstance(
-        json_body,
-        dict,
-    ):
-        preferred_keys = [
-            "items",
-            "results",
-            "content",
-            "registrants",
-            "data",
-        ]
-
-        for key in preferred_keys:
-            value = (
-                json_body.get(
-                    key
-                )
-            )
-
-            if isinstance(
-                value,
-                list,
-            ):
-                return {
-                    "path": (
-                        f"root.{key}"
-                    ),
-                    "items": (
-                        value
-                    ),
-                }
-
-    lists = find_json_lists(
-        json_body
-    )
-
-    if not lists:
-        return {
-            "path": "",
-            "items": [],
-        }
-
-    scored_lists = [
-        (
-            score_json_list(
-                candidate
-            ),
-            candidate,
-        )
-        for candidate
-        in lists
-    ]
-
-    scored_lists.sort(
-        key=lambda row: row[0],
-        reverse=True,
-    )
-
-    best_score, best_candidate = (
-        scored_lists[0]
-    )
-
-    if best_score <= 0:
-        return {
-            "path": "",
-            "items": [],
-        }
-
-    return {
-        "path": (
-            best_candidate[
-                "path"
-            ]
-        ),
-        "items": (
-            best_candidate[
-                "items"
-            ]
-        ),
-    }
-
-
-# --------------------------------------------------
-# RECURSIVE FIELD LOOKUP
-# --------------------------------------------------
-def find_field(
-    value,
-    possible_keys,
-):
-    possible_keys = {
-        key.lower()
-        for key
-        in possible_keys
-    }
-
-    if isinstance(
-        value,
-        dict,
-    ):
-        for key, nested_value in (
-            value.items()
-        ):
-            if (
-                str(key).lower()
-                in possible_keys
-            ):
-                if not isinstance(
-                    nested_value,
-                    (
-                        dict,
-                        list,
-                    ),
-                ):
-                    return nested_value
-
-        for nested_value in (
-            value.values()
-        ):
-            result = find_field(
-                nested_value,
-                possible_keys,
-            )
-
-            if result not in (
-                None,
-                "",
-            ):
-                return result
-
-    elif isinstance(
-        value,
-        list,
-    ):
-        for item in value:
-            result = find_field(
-                item,
-                possible_keys,
-            )
-
-            if result not in (
-                None,
-                "",
-            ):
-                return result
-
-    return None
-
-
-# --------------------------------------------------
-# NORMALISE REGISTRANT
-# --------------------------------------------------
-def normalise_registrant(
-    item,
-):
-    if not isinstance(
-        item,
-        dict,
-    ):
-        return {
-            "Name": (
-                normalise_text(
-                    item
-                )
-            ),
-            "Address": "",
-            "Status": "",
-            "ID": "",
-        }
-
-    name = find_field(
-        item,
-        {
-            "name",
-            "registrantName",
-            "registrant-name",
-            "assetOwnerName",
-            "legalEntityName",
-            "organisationName",
-            "organizationName",
-            "companyName",
-        },
-    )
-
-    address = find_field(
-        item,
-        {
-            "address",
-            "registrantAddress",
-            "assetOwnerAddress",
-            "fullAddress",
-            "formattedAddress",
-        },
-    )
-
-    status = find_field(
-        item,
-        {
-            "status",
-            "registrationStatus",
-            "registrantStatus",
-            "assetOwnerStatus",
-        },
-    )
-
-    identifier = find_field(
-        item,
-        {
-            "id",
-            "uuid",
-            "externalId",
-            "assetOwnerId",
-            "legalEntityId",
-        },
-    )
-
-    return {
-        "Name": (
-            normalise_text(
-                name
-            )
-        ),
-        "Address": (
-            normalise_text(
-                address
-            )
-        ),
-        "Status": (
-            normalise_text(
-                status
-            )
-        ),
-        "ID": (
-            normalise_text(
-                identifier
-            )
-        ),
-    }
-
-
-# --------------------------------------------------
-# FIND TOTAL COUNT
-# --------------------------------------------------
-def find_total_count(
-    value,
-):
-    total_keys = {
-        "total",
-        "totalcount",
-        "totalitems",
-        "totalelements",
-        "totalresults",
-    }
-
-    if isinstance(
-        value,
-        dict,
-    ):
-        for key, nested_value in (
-            value.items()
-        ):
-            if (
-                str(key).lower()
-                in total_keys
-                and
-                isinstance(
-                    nested_value,
-                    (
-                        int,
-                        float,
-                    ),
-                )
-            ):
-                return int(
-                    nested_value
-                )
-
-        for nested_value in (
-            value.values()
-        ):
-            result = find_total_count(
-                nested_value
-            )
-
-            if result is not None:
-                return result
-
-    elif isinstance(
-        value,
-        list,
-    ):
-        for item in value:
-            result = find_total_count(
-                item
-            )
-
-            if result is not None:
-                return result
-
-    return None
-
-
-# --------------------------------------------------
-# KNOWN REGISTRANT CHECK
-# --------------------------------------------------
-def find_known_registrants(
-    json_body,
-):
-    if json_body is None:
-        return []
-
-    try:
-        text = json.dumps(
-            json_body,
-            ensure_ascii=False,
-        ).lower()
-
-    except Exception:
-        text = str(
-            json_body
-        ).lower()
-
-    known_names = [
-        "3m belgium",
-        "afton chemical",
-        "basf se",
-    ]
-
-    return [
-        name
-        for name
-        in known_names
-        if name in text
-    ]
-
-
-# --------------------------------------------------
-# RUN TEST
-# --------------------------------------------------
-def run_test():
+def run_discovery():
     session = (
         create_session()
     )
 
     # ----------------------------------
-    # LOAD RUNTIME CONFIG
+    # RUNTIME CONFIGURATION
     # ----------------------------------
     runtime_response, runtime_error = (
         safe_get(
@@ -1064,25 +703,8 @@ def run_test():
         )
     )
 
-    runtime_api_base = ""
-
-    if runtime_json is not None:
-        runtime_value = (
-            find_json_key(
-                runtime_json,
-                "registrantsApiUrl",
-            )
-        )
-
-        if runtime_value:
-            runtime_api_base = (
-                normalise_text(
-                    runtime_value
-                )
-            )
-
     # ----------------------------------
-    # LOAD DOSSIER LIST COMPONENT
+    # DOSSIER LIST JAVASCRIPT
     # ----------------------------------
     javascript_response, javascript_error = (
         safe_get(
@@ -1098,262 +720,141 @@ def run_test():
 
     if javascript_response is not None:
         javascript_text = (
-            javascript_response.text
-            or ""
+            clean_javascript(
+                javascript_response.text
+                or ""
+            )
         )
 
     # ----------------------------------
-    # EXTRACT BASE AND SUFFIX
+    # EXTRACT ASSIGNMENTS
     # ----------------------------------
-    default_api_base = (
-        extract_default_api_base(
+    api_assignment = (
+        extract_registrants_assignment(
             javascript_text
         )
     )
 
-    suffix_result = (
-        extract_registrants_suffix(
+    url_assignment = (
+        extract_registrants_url_assignment(
             javascript_text
         )
     )
 
-    suffix = (
-        suffix_result[
-            "suffix"
-        ]
-    )
-
-    final_api_base = (
-        runtime_api_base
-        or
-        default_api_base
-    )
-
-    endpoint = (
-        build_registrants_endpoint(
-            api_base=(
-                final_api_base
-            ),
-            suffix=(
-                suffix
-            ),
+    api_literals = (
+        extract_api_literals(
+            javascript_text
         )
     )
 
-    # ----------------------------------
-    # API PARAMETERS
-    # ----------------------------------
-    api_params = {
-        "rmlId": (
-            RML_ID
-        ),
-        "pageIndex": 1,
-        "pageSize": 100,
-    }
-
-    api_response = None
-    api_error = None
-    api_json = None
-
-    # ----------------------------------
-    # ONLY CALL IF EXTRACTED FROM ECHA
-    # ----------------------------------
-    if (
-        endpoint
-        and
-        suffix.lower()
-        ==
-        "registrants"
-        and
-        "api-dossier-list"
-        in final_api_base.lower()
-    ):
-        api_response, api_error = (
-            safe_get(
-                session=session,
-                url=endpoint,
-                params=api_params,
-                referer=OVERVIEW_URL,
-            )
+    fallback_definitions = (
+        find_identifier_definitions(
+            javascript_text,
+            api_assignment[
+                "fallback_identifier"
+            ],
         )
+    )
 
-        api_json = (
-            parse_json_response(
-                api_response
-            )
+    registrants_contexts = (
+        find_all_contexts(
+            javascript_text,
+            "registrantsApiUrl",
         )
+    )
 
-    # ----------------------------------
-    # PROCESS RESPONSE
-    # ----------------------------------
-    selected_list = {
-        "path": "",
-        "items": [],
-    }
-
-    registrants = []
-    total_count = None
-    known_registrants = []
-
-    if api_json is not None:
-        selected_list = (
-            select_result_list(
-                api_json
-            )
+    v2_contexts = (
+        find_all_contexts(
+            javascript_text,
+            "/api-dossier-list/v2/",
+            before=1500,
+            after=3500,
         )
-
-        registrants = [
-            normalise_registrant(
-                item
-            )
-            for item
-            in selected_list[
-                "items"
-            ]
-        ]
-
-        total_count = (
-            find_total_count(
-                api_json
-            )
-        )
-
-        known_registrants = (
-            find_known_registrants(
-                api_json
-            )
-        )
+    )
 
     return {
-        "runtime_status": (
-            runtime_response.status_code
-            if runtime_response
-            is not None
-            else None
+        "runtime": {
+            "status": (
+                runtime_response.status_code
+                if runtime_response
+                is not None
+                else None
+            ),
+            "content_type": (
+                runtime_response.headers.get(
+                    "content-type",
+                    "",
+                )
+                if runtime_response
+                is not None
+                else ""
+            ),
+            "bytes": (
+                len(
+                    runtime_response.content
+                )
+                if runtime_response
+                is not None
+                else 0
+            ),
+            "json": (
+                runtime_json
+            ),
+            "text": (
+                runtime_response.text
+                if runtime_response
+                is not None
+                else ""
+            ),
+            "error": (
+                runtime_error
+            ),
+        },
+        "javascript": {
+            "status": (
+                javascript_response.status_code
+                if javascript_response
+                is not None
+                else None
+            ),
+            "content_type": (
+                javascript_response.headers.get(
+                    "content-type",
+                    "",
+                )
+                if javascript_response
+                is not None
+                else ""
+            ),
+            "bytes": (
+                len(
+                    javascript_response.content
+                )
+                if javascript_response
+                is not None
+                else 0
+            ),
+            "error": (
+                javascript_error
+            ),
+        },
+        "api_assignment": (
+            api_assignment
         ),
-        "runtime_content_type": (
-            runtime_response.headers.get(
-                "content-type",
-                "",
-            )
-            if runtime_response
-            is not None
-            else ""
+        "url_assignment": (
+            url_assignment
         ),
-        "runtime_json": (
-            runtime_json
+        "api_literals": (
+            api_literals
         ),
-        "runtime_error": (
-            runtime_error
+        "fallback_definitions": (
+            fallback_definitions
         ),
-        "javascript_status": (
-            javascript_response.status_code
-            if javascript_response
-            is not None
-            else None
+        "registrants_contexts": (
+            registrants_contexts
         ),
-        "javascript_content_type": (
-            javascript_response.headers.get(
-                "content-type",
-                "",
-            )
-            if javascript_response
-            is not None
-            else ""
-        ),
-        "javascript_bytes": (
-            len(
-                javascript_response.content
-            )
-            if javascript_response
-            is not None
-            else 0
-        ),
-        "javascript_error": (
-            javascript_error
-        ),
-        "runtime_api_base": (
-            runtime_api_base
-        ),
-        "default_api_base": (
-            default_api_base
-        ),
-        "final_api_base": (
-            final_api_base
-        ),
-        "suffix": (
-            suffix
-        ),
-        "matched_expression": (
-            suffix_result[
-                "matched_expression"
-            ]
-        ),
-        "source_context": (
-            suffix_result[
-                "context"
-            ]
-        ),
-        "endpoint": (
-            endpoint
-        ),
-        "api_params": (
-            api_params
-        ),
-        "api_status": (
-            api_response.status_code
-            if api_response
-            is not None
-            else None
-        ),
-        "api_final_url": (
-            api_response.url
-            if api_response
-            is not None
-            else ""
-        ),
-        "api_content_type": (
-            api_response.headers.get(
-                "content-type",
-                "",
-            )
-            if api_response
-            is not None
-            else ""
-        ),
-        "api_bytes": (
-            len(
-                api_response.content
-            )
-            if api_response
-            is not None
-            else 0
-        ),
-        "api_text": (
-            api_response.text
-            if api_response
-            is not None
-            else ""
-        ),
-        "api_json": (
-            api_json
-        ),
-        "api_error": (
-            api_error
-        ),
-        "selected_path": (
-            selected_list[
-                "path"
-            ]
-        ),
-        "registrants": (
-            registrants
-        ),
-        "total_count": (
-            total_count
-        ),
-        "known_registrants": (
-            known_registrants
+        "v2_contexts": (
+            v2_contexts
         ),
     }
 
@@ -1362,7 +863,7 @@ def run_test():
 # STREAMLIT INTERFACE
 # --------------------------------------------------
 st.title(
-    "ECHA Registrants API Test"
+    "ECHA Registrants API discovery"
 )
 
 st.caption(
@@ -1370,20 +871,22 @@ st.caption(
 )
 
 st.write(
-    "V11 reconstructs the registrants API "
-    "request from the actual ECHA dossierList "
+    "V12 performs one focused task: determine "
+    "the exact fallback value used for "
+    "`registrantsApiUrl` in the ECHA dossierList "
     "micro-frontend."
 )
 
 st.info(
-    "The API request is only sent when the code "
-    "confirms both the dossier-list API base and "
-    'the "registrants" endpoint suffix.'
+    "This version does not call a registrants "
+    "endpoint. It only reads public ECHA "
+    "configuration and JavaScript to avoid "
+    "guessing another API URL."
 )
 
 
 # --------------------------------------------------
-# TEST SUBSTANCE DISPLAY
+# TEST SUBSTANCE
 # --------------------------------------------------
 st.subheader(
     "Known test substance"
@@ -1415,10 +918,15 @@ metric_columns[3].metric(
 
 
 # --------------------------------------------------
-# SOURCE
+# RESOURCES
 # --------------------------------------------------
 st.subheader(
-    "Source implementation"
+    "Resources"
+)
+
+st.code(
+    RUNTIME_CONFIG_URL,
+    language=None,
 )
 
 st.code(
@@ -1431,76 +939,101 @@ st.code(
 # RUN
 # --------------------------------------------------
 if st.button(
-    "Test extracted registrants API",
+    "Discover registrantsApiUrl fallback",
     type="primary",
 ):
     with st.spinner(
-        "Extracting and testing "
-        "the registrants API..."
+        "Reading the ECHA dossierList "
+        "configuration..."
     ):
         result = (
-            run_test()
+            run_discovery()
         )
 
     st.success(
-        "Test completed."
+        "Discovery completed."
     )
 
     # ----------------------------------
-    # 1. EXTRACTION
+    # 1. SOURCE RESPONSES
     # ----------------------------------
     st.subheader(
-        "1. Extracted API configuration"
+        "1. Source responses"
     )
 
-    config_rows = [
+    response_rows = [
         {
-            "Setting": (
-                "Runtime registrantsApiUrl"
+            "Resource": (
+                "Runtime configuration"
             ),
-            "Value": (
+            "HTTP": (
                 result[
-                    "runtime_api_base"
+                    "runtime"
+                ][
+                    "status"
+                ]
+            ),
+            "Content-Type": (
+                result[
+                    "runtime"
+                ][
+                    "content_type"
+                ]
+            ),
+            "Bytes": (
+                result[
+                    "runtime"
+                ][
+                    "bytes"
+                ]
+            ),
+            "Valid JSON": (
+                result[
+                    "runtime"
+                ][
+                    "json"
+                ]
+                is not None
+            ),
+            "Error": (
+                result[
+                    "runtime"
+                ][
+                    "error"
                 ]
             ),
         },
         {
-            "Setting": (
-                "JavaScript default API base"
+            "Resource": (
+                "dossierList web-components"
             ),
-            "Value": (
+            "HTTP": (
                 result[
-                    "default_api_base"
+                    "javascript"
+                ][
+                    "status"
                 ]
             ),
-        },
-        {
-            "Setting": (
-                "Selected API base"
-            ),
-            "Value": (
+            "Content-Type": (
                 result[
-                    "final_api_base"
+                    "javascript"
+                ][
+                    "content_type"
                 ]
             ),
-        },
-        {
-            "Setting": (
-                "Extracted suffix"
-            ),
-            "Value": (
+            "Bytes": (
                 result[
-                    "suffix"
+                    "javascript"
+                ][
+                    "bytes"
                 ]
             ),
-        },
-        {
-            "Setting": (
-                "Constructed endpoint"
-            ),
-            "Value": (
+            "Valid JSON": False,
+            "Error": (
                 result[
-                    "endpoint"
+                    "javascript"
+                ][
+                    "error"
                 ]
             ),
         },
@@ -1508,425 +1041,356 @@ if st.button(
 
     st.dataframe(
         pd.DataFrame(
-            config_rows
+            response_rows
         ),
         use_container_width=True,
         hide_index=True,
     )
 
     # ----------------------------------
-    # 2. MATCH
+    # 2. RUNTIME CONFIGURATION
     # ----------------------------------
     st.subheader(
-        "2. JavaScript expression"
+        "2. Runtime configuration"
     )
 
-    if result[
-        "matched_expression"
-    ]:
-        st.success(
-            "The registrants endpoint "
-            "construction was found."
+    if (
+        result[
+            "runtime"
+        ][
+            "json"
+        ]
+        is not None
+    ):
+        st.json(
+            result[
+                "runtime"
+            ][
+                "json"
+            ]
+        )
+
+    else:
+        st.warning(
+            "Runtime configuration did "
+            "not return valid JSON."
         )
 
         st.code(
             result[
-                "matched_expression"
+                "runtime"
+            ][
+                "text"
+            ][:5000],
+            language=None,
+        )
+
+    # ----------------------------------
+    # 3. REGISTRANTS API ASSIGNMENT
+    # ----------------------------------
+    st.subheader(
+        "3. registrantsApiUrl assignment"
+    )
+
+    assignment = (
+        result[
+            "api_assignment"
+        ]
+    )
+
+    assignment_rows = [
+        {
+            "Field": (
+                "Full assignment"
+            ),
+            "Value": (
+                assignment[
+                    "full_assignment"
+                ]
+            ),
+        },
+        {
+            "Field": (
+                "Fallback expression"
+            ),
+            "Value": (
+                assignment[
+                    "fallback_expression"
+                ]
+            ),
+        },
+        {
+            "Field": (
+                "Fallback identifier"
+            ),
+            "Value": (
+                assignment[
+                    "fallback_identifier"
+                ]
+            ),
+        },
+    ]
+
+    st.dataframe(
+        pd.DataFrame(
+            assignment_rows
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    if assignment[
+        "context"
+    ]:
+        st.code(
+            assignment[
+                "context"
             ],
             language="javascript",
         )
 
     else:
         st.warning(
-            "The exact registrants endpoint "
-            "expression was not matched."
+            "No registrantsApiUrl context "
+            "was found."
         )
 
-        if result[
-            "source_context"
-        ]:
-            st.code(
-                result[
-                    "source_context"
-                ],
-                language="javascript",
-            )
-
     # ----------------------------------
-    # 3. API REQUEST
+    # 4. REGISTRANTS URL ASSIGNMENT
     # ----------------------------------
     st.subheader(
-        "3. API request"
+        "4. registrantsUrl assignment"
     )
 
-    api_columns = (
-        st.columns(4)
-    )
-
-    api_columns[0].metric(
-        "HTTP",
-        (
-            result[
-                "api_status"
-            ]
-            if result[
-                "api_status"
-            ]
-            is not None
-            else
-            "Not sent"
-        ),
-    )
-
-    api_columns[1].metric(
-        "Response bytes",
+    url_assignment = (
         result[
-            "api_bytes"
-        ],
-    )
-
-    api_columns[2].metric(
-        "Valid JSON",
-        (
-            "Yes"
-            if result[
-                "api_json"
-            ]
-            is not None
-            else
-            "No"
-        ),
-    )
-
-    api_columns[3].metric(
-        "Total reported",
-        (
-            result[
-                "total_count"
-            ]
-            if result[
-                "total_count"
-            ]
-            is not None
-            else
-            "Not found"
-        ),
-    )
-
-    st.write(
-        "**Final request URL:**"
-    )
-
-    st.code(
-        result[
-            "api_final_url"
-        ]
-        or
-        result[
-            "endpoint"
-        ]
-        or
-        "No endpoint constructed",
-        language=None,
-    )
-
-    st.write(
-        "**Request parameters:**"
-    )
-
-    st.json(
-        result[
-            "api_params"
+            "url_assignment"
         ]
     )
 
-    if result[
-        "api_content_type"
+    url_rows = [
+        {
+            "Field": (
+                "Full assignment"
+            ),
+            "Value": (
+                url_assignment[
+                    "full_assignment"
+                ]
+            ),
+        },
+        {
+            "Field": (
+                "Suffix"
+            ),
+            "Value": (
+                url_assignment[
+                    "suffix"
+                ]
+            ),
+        },
+    ]
+
+    st.dataframe(
+        pd.DataFrame(
+            url_rows
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    if url_assignment[
+        "context"
     ]:
-        st.write(
-            "**Content-Type:** "
-            f"{result['api_content_type']}"
-        )
-
-    if result[
-        "api_error"
-    ]:
-        st.error(
-            result[
-                "api_error"
-            ]
+        st.code(
+            url_assignment[
+                "context"
+            ],
+            language="javascript",
         )
 
     # ----------------------------------
-    # RESPONSE STATUS
-    # ----------------------------------
-    if (
-        result[
-            "api_status"
-        ]
-        == 200
-        and
-        result[
-            "api_json"
-        ]
-        is not None
-    ):
-        st.success(
-            "ECHA returned HTTP 200 "
-            "with valid JSON."
-        )
-
-    elif (
-        result[
-            "api_status"
-        ]
-        == 403
-    ):
-        st.error(
-            "ECHA returned HTTP 403. "
-            "The endpoint was reached but "
-            "access was refused."
-        )
-
-    elif (
-        result[
-            "api_status"
-        ]
-        == 404
-    ):
-        st.error(
-            "ECHA returned HTTP 404. "
-            "The constructed endpoint was "
-            "not found."
-        )
-
-    elif (
-        result[
-            "api_status"
-        ]
-        == 429
-    ):
-        st.error(
-            "ECHA returned HTTP 429. "
-            "The request was rate limited."
-        )
-
-    elif (
-        result[
-            "api_status"
-        ]
-        is not None
-        and
-        result[
-            "api_status"
-        ]
-        >= 400
-    ):
-        st.error(
-            "ECHA returned HTTP "
-            f"{result['api_status']}."
-        )
-
-    # ----------------------------------
-    # 4. BENCHMARK
+    # 5. FALLBACK DEFINITIONS
     # ----------------------------------
     st.subheader(
-        "4. Benchmark check"
+        "5. Fallback identifier definitions"
     )
 
-    benchmark_columns = (
-        st.columns(3)
-    )
-
-    benchmark_columns[0].metric(
-        "Expected",
-        EXPECTED_REGISTRANTS,
-    )
-
-    benchmark_columns[1].metric(
-        "API total",
-        (
-            result[
-                "total_count"
-            ]
-            if result[
-                "total_count"
-            ]
-            is not None
-            else
-            "Unknown"
-        ),
-    )
-
-    benchmark_columns[2].metric(
-        "Rows extracted",
-        len(
-            result[
-                "registrants"
-            ]
-        ),
-    )
-
-    if (
+    fallback_definitions = (
         result[
-            "total_count"
-        ]
-        ==
-        EXPECTED_REGISTRANTS
-    ):
-        st.success(
-            "Exact benchmark match: "
-            "the API reports 42 registrants."
-        )
-
-    if result[
-        "known_registrants"
-    ]:
-        st.write(
-            "**Known benchmark names found:**"
-        )
-
-        st.write(
-            ", ".join(
-                result[
-                    "known_registrants"
-                ]
-            )
-        )
-
-    # ----------------------------------
-    # 5. REGISTRANTS
-    # ----------------------------------
-    st.subheader(
-        "5. Registrants"
-    )
-
-    st.write(
-        "**Selected JSON list path:**"
-    )
-
-    st.code(
-        result[
-            "selected_path"
-        ]
-        or
-        "No list selected",
-        language=None,
-    )
-
-    registrants = (
-        result[
-            "registrants"
+            "fallback_definitions"
         ]
     )
 
-    if registrants:
-        dataframe = (
-            pd.DataFrame(
-                registrants
-            )
-        )
-
-        useful_columns = [
-            column
-            for column
-            in dataframe.columns
-            if (
-                dataframe[
-                    column
-                ]
-                .astype(str)
-                .str.strip()
-                .ne("")
-                .any()
-            )
+    if fallback_definitions:
+        definition_rows = [
+            {
+                "Identifier": (
+                    row[
+                        "identifier"
+                    ]
+                ),
+                "Value expression": (
+                    row[
+                        "value_expression"
+                    ]
+                ),
+                "Position": (
+                    row[
+                        "position"
+                    ]
+                ),
+            }
+            for row
+            in fallback_definitions
         ]
-
-        if useful_columns:
-            dataframe = (
-                dataframe[
-                    useful_columns
-                ]
-            )
 
         st.dataframe(
-            dataframe,
+            pd.DataFrame(
+                definition_rows
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        for index, row in enumerate(
+            fallback_definitions,
+            start=1,
+        ):
+            with st.expander(
+                f"Definition context {index}",
+                expanded=(
+                    index == 1
+                ),
+            ):
+                st.code(
+                    row[
+                        "context"
+                    ],
+                    language="javascript",
+                )
+
+    else:
+        st.warning(
+            "No definition for the fallback "
+            "identifier was found."
+        )
+
+    # ----------------------------------
+    # 6. API LITERALS
+    # ----------------------------------
+    st.subheader(
+        "6. API and registrant string literals"
+    )
+
+    api_literals = (
+        result[
+            "api_literals"
+        ]
+    )
+
+    if api_literals:
+        literal_rows = [
+            {
+                "Value": (
+                    row[
+                        "value"
+                    ]
+                ),
+                "Position": (
+                    row[
+                        "position"
+                    ]
+                ),
+            }
+            for row
+            in api_literals
+        ]
+
+        st.dataframe(
+            pd.DataFrame(
+                literal_rows
+            ),
             use_container_width=True,
             hide_index=True,
         )
 
     else:
         st.warning(
-            "No registrant rows "
-            "were extracted."
+            "No relevant API string "
+            "literals were found."
         )
 
     # ----------------------------------
-    # 6. RAW JSON
+    # 7. V2 CONTEXT
     # ----------------------------------
-    with st.expander(
-        "6. Complete API JSON",
-        expanded=False,
-    ):
-        if (
-            result[
-                "api_json"
-            ]
-            is not None
+    st.subheader(
+        "7. Context around "
+        "/api-dossier-list/v2/"
+    )
+
+    v2_contexts = (
+        result[
+            "v2_contexts"
+        ]
+    )
+
+    if v2_contexts:
+        for index, row in enumerate(
+            v2_contexts,
+            start=1,
         ):
-            st.json(
-                result[
-                    "api_json"
-                ]
-            )
+            with st.expander(
+                f"V2 context {index}",
+                expanded=(
+                    index == 1
+                ),
+            ):
+                st.code(
+                    row[
+                        "context"
+                    ],
+                    language="javascript",
+                )
 
-        else:
-            st.write(
-                "No valid JSON returned."
-            )
-
-    # ----------------------------------
-    # 7. RAW RESPONSE
-    # ----------------------------------
-    with st.expander(
-        "7. Raw API response",
-        expanded=False,
-    ):
-        if result[
-            "api_text"
-        ]:
-            st.code(
-                result[
-                    "api_text"
-                ][:20000],
-                language=None,
-            )
-
-        else:
-            st.write(
-                "No API response body."
-            )
+    else:
+        st.warning(
+            "No /api-dossier-list/v2/ "
+            "context was found."
+        )
 
     # ----------------------------------
-    # 8. RUNTIME CONFIG
+    # 8. ALL REGISTRANTS CONTEXTS
     # ----------------------------------
     with st.expander(
-        "8. Runtime configuration",
+        "8. All registrantsApiUrl contexts",
         expanded=False,
     ):
-        if (
+        registrants_contexts = (
             result[
-                "runtime_json"
+                "registrants_contexts"
             ]
-            is not None
-        ):
-            st.json(
-                result[
-                    "runtime_json"
-                ]
-            )
+        )
+
+        if registrants_contexts:
+            for index, row in enumerate(
+                registrants_contexts,
+                start=1,
+            ):
+                st.markdown(
+                    f"**Context {index} at "
+                    f"position {row['position']}**"
+                )
+
+                st.code(
+                    row[
+                        "context"
+                    ],
+                    language="javascript",
+                )
 
         else:
             st.write(
-                "No runtime configuration JSON."
+                "No registrantsApiUrl "
+                "contexts found."
             )
