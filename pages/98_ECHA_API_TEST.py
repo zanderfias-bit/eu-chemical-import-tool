@@ -1,6 +1,6 @@
+import json
 import re
-from collections import deque
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import pandas as pd
 import requests
@@ -13,7 +13,7 @@ from urllib3.util.retry import Retry
 # PAGE CONFIGURATION
 # --------------------------------------------------
 st.set_page_config(
-    page_title="ECHA Dossier List Discovery",
+    page_title="ECHA Registrants API Test",
     page_icon="🔎",
     layout="wide",
 )
@@ -22,7 +22,7 @@ st.set_page_config(
 # --------------------------------------------------
 # VERSION
 # --------------------------------------------------
-CODE_VERSION = "ECHA_DOSSIER_LIST_DISCOVERY_V9"
+CODE_VERSION = "ECHA_REGISTRANTS_API_TEST_V10"
 
 
 # --------------------------------------------------
@@ -32,11 +32,17 @@ CAS_NUMBER = "128-37-0"
 EC_NUMBER = "204-881-4"
 RML_ID = "100.004.439"
 
+EXPECTED_REGISTRANTS = 42
+
+
+# --------------------------------------------------
+# ECHA RESOURCES
+# --------------------------------------------------
 ECHA_BASE_URL = "https://chem.echa.europa.eu"
 
-DOSSIER_LIST_REMOTE_ENTRY = (
+OVERVIEW_URL = (
     f"{ECHA_BASE_URL}/"
-    "dossierList/remoteEntry.json"
+    f"{RML_ID}/overview"
 )
 
 RUNTIME_CONFIG_URL = (
@@ -44,9 +50,10 @@ RUNTIME_CONFIG_URL = (
     "mfe-config/mfe-config.json"
 )
 
-OVERVIEW_URL = (
+DOSSIER_LIST_WEB_COMPONENTS_URL = (
     f"{ECHA_BASE_URL}/"
-    f"{RML_ID}/overview"
+    "dossierList/"
+    "web-components-NIMFYLDU.js"
 )
 
 
@@ -56,9 +63,7 @@ OVERVIEW_URL = (
 CONNECT_TIMEOUT_SECONDS = 20
 READ_TIMEOUT_SECONDS = 90
 
-MAX_FILES = 100
-
-HEADERS = {
+REQUEST_HEADERS = {
     "Accept": (
         "application/json,"
         "application/javascript,"
@@ -79,33 +84,13 @@ HEADERS = {
 
 
 # --------------------------------------------------
-# SEARCH TERMS
-# --------------------------------------------------
-SEARCH_TERMS = [
-    "registrants",
-    "registrant",
-    "asset-owner",
-    "assetowner",
-    "listType",
-    "dossierListApiUrl",
-    "dossierApiUrl",
-    "api-dossier-list",
-    "pageIndex",
-    "pageSize",
-    "rmlId",
-    "address",
-    "registrationStatus",
-]
-
-
-# --------------------------------------------------
 # HTTP SESSION
 # --------------------------------------------------
 def create_session():
     session = requests.Session()
 
     session.headers.update(
-        HEADERS
+        REQUEST_HEADERS
     )
 
     retry = Retry(
@@ -128,38 +113,40 @@ def create_session():
         raise_on_status=False,
     )
 
-    adapter = HTTPAdapter(
-        max_retries=retry
-    )
-
     session.mount(
         "https://",
-        adapter,
+        HTTPAdapter(
+            max_retries=retry
+        ),
     )
 
     return session
 
 
 # --------------------------------------------------
-# SAFE GET
+# SAFE GET REQUEST
 # --------------------------------------------------
 def safe_get(
     session,
     url,
+    params=None,
     referer=None,
 ):
-    headers = (
-        {
-            "Referer": referer
-        }
-        if referer
-        else None
-    )
+    headers = {}
+
+    if referer:
+        headers[
+            "Referer"
+        ] = referer
 
     try:
         response = session.get(
             url,
-            headers=headers,
+            params=params,
+            headers=(
+                headers
+                or None
+            ),
             timeout=(
                 CONNECT_TIMEOUT_SECONDS,
                 READ_TIMEOUT_SECONDS,
@@ -183,146 +170,430 @@ def safe_get(
 
 
 # --------------------------------------------------
-# CLEAN DISCOVERED URL
+# SAFE JSON PARSER
 # --------------------------------------------------
-def clean_discovered_url(
+def parse_json_response(
+    response,
+):
+    if response is None:
+        return None
+
+    try:
+        return response.json()
+
+    except ValueError:
+        return None
+
+
+# --------------------------------------------------
+# NORMALISE TEXT
+# --------------------------------------------------
+def normalise_text(
     value,
-    base_url,
 ):
     if value is None:
         return ""
 
-    cleaned = (
-        str(value)
-        .strip()
-        .strip("\"'")
+    if isinstance(
+        value,
+        (
+            dict,
+            list,
+            tuple,
+        ),
+    ):
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+        )
+
+    text = str(
+        value
+    ).strip()
+
+    if text.lower() in {
+        "",
+        "none",
+        "null",
+        "nan",
+    }:
+        return ""
+
+    return " ".join(
+        text.split()
+    )
+
+
+# --------------------------------------------------
+# RECURSIVE JSON KEY LOOKUP
+# --------------------------------------------------
+def find_json_key(
+    value,
+    wanted_key,
+):
+    wanted_key_lower = (
+        wanted_key.lower()
+    )
+
+    if isinstance(
+        value,
+        dict,
+    ):
+        for key, nested_value in (
+            value.items()
+        ):
+            if (
+                str(key).lower()
+                ==
+                wanted_key_lower
+            ):
+                return nested_value
+
+        for nested_value in (
+            value.values()
+        ):
+            result = find_json_key(
+                nested_value,
+                wanted_key,
+            )
+
+            if result is not None:
+                return result
+
+    elif isinstance(
+        value,
+        list,
+    ):
+        for item in value:
+            result = find_json_key(
+                item,
+                wanted_key,
+            )
+
+            if result is not None:
+                return result
+
+    return None
+
+
+# --------------------------------------------------
+# FIND SOURCE CONTEXT
+# --------------------------------------------------
+def source_context(
+    text,
+    search_text,
+    before=1000,
+    after=2500,
+):
+    if not text:
+        return ""
+
+    position = (
+        text.lower()
+        .find(
+            search_text.lower()
+        )
+    )
+
+    if position < 0:
+        return ""
+
+    start = max(
+        0,
+        position - before,
+    )
+
+    end = min(
+        len(text),
+        (
+            position
+            + len(search_text)
+            + after
+        ),
+    )
+
+    return text[
+        start:end
+    ]
+
+
+# --------------------------------------------------
+# EXTRACT DEFAULT REGISTRANTS API URL
+# --------------------------------------------------
+def extract_default_registrants_api_url(
+    javascript_text,
+):
+    if not javascript_text:
+        return ""
+
+    patterns = [
+        (
+            r"registrantsApiUrl"
+            r"\s*="
+            r"[^;]{0,500}?"
+            r"[\"']"
+            r"([^\"']*api-dossier-list[^\"']*)"
+            r"[\"']"
+        ),
+        (
+            r"[\"']"
+            r"([^\"']*/api-dossier-list/v\d+/)"
+            r"[\"']"
+        ),
+        (
+            r"[\"']"
+            r"([^\"']*api-dossier-list/v\d+/)"
+            r"[\"']"
+        ),
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            javascript_text,
+            flags=re.IGNORECASE,
+        )
+
+        if not match:
+            continue
+
+        value = (
+            match.group(1)
+            .replace(
+                "\\/",
+                "/",
+            )
+            .strip()
+        )
+
+        if value:
+            return value
+
+    return ""
+
+
+# --------------------------------------------------
+# EXTRACT CONCAT ARGUMENT
+# --------------------------------------------------
+def extract_registrants_concat_argument(
+    javascript_text,
+):
+    if not javascript_text:
+        return {
+            "raw_argument": "",
+            "literal_value": "",
+            "context": "",
+        }
+
+    patterns = [
+        (
+            r"registrantsUrl"
+            r"\s*="
+            r"this\.registrantsApiUrl"
+            r"\.concat\("
+            r"([^)]{0,500})"
+            r"\)"
+        ),
+        (
+            r"registrantsUrl"
+            r"\s*="
+            r"[^;]{0,300}?"
+            r"\.concat\("
+            r"([^)]{0,500})"
+            r"\)"
+        ),
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            javascript_text,
+            flags=re.IGNORECASE,
+        )
+
+        if not match:
+            continue
+
+        raw_argument = (
+            match.group(1)
+            .strip()
+        )
+
+        literal_match = re.fullmatch(
+            r"""[^"']+["']""",
+            raw_argument,
+        )
+
+        literal_value = ""
+
+        if literal_match:
+            literal_value = (
+                literal_match.group(1)
+                .replace(
+                    "\\/",
+                    "/",
+                )
+                .strip()
+            )
+
+        return {
+            "raw_argument": (
+                raw_argument
+            ),
+            "literal_value": (
+                literal_value
+            ),
+            "context": (
+                javascript_text[
+                    max(
+                        0,
+                        match.start() - 1200,
+                    ):
+                    min(
+                        len(
+                            javascript_text
+                        ),
+                        match.end() + 2500,
+                    )
+                ]
+            ),
+        }
+
+    return {
+        "raw_argument": "",
+        "literal_value": "",
+        "context": source_context(
+            javascript_text,
+            "registrantsUrl",
+        ),
+    }
+
+
+# --------------------------------------------------
+# EXTRACT INTERESTING STRING LITERALS
+# --------------------------------------------------
+def extract_registrant_strings(
+    javascript_text,
+):
+    if not javascript_text:
+        return []
+
+    quoted_strings = re.findall(
+        r"""[^"']{1,500}["']""",
+        javascript_text,
+    )
+
+    keywords = {
+        "registrant",
+        "asset-owner",
+        "assetowner",
+        "api-dossier-list",
+        "pageindex",
+        "pagesize",
+        "rmlid",
+    }
+
+    results = []
+    seen = set()
+
+    for value in quoted_strings:
+        clean_value = (
+            value
+            .replace(
+                "\\/",
+                "/",
+            )
+            .strip()
+        )
+
+        lower_value = (
+            clean_value.lower()
+        )
+
+        if not any(
+            keyword in lower_value
+            for keyword in keywords
+        ):
+            continue
+
+        if clean_value in seen:
+            continue
+
+        seen.add(
+            clean_value
+        )
+
+        results.append(
+            clean_value
+        )
+
+    return results
+
+
+# --------------------------------------------------
+# BUILD API ENDPOINT
+# --------------------------------------------------
+def build_registrants_endpoint(
+    api_base,
+    suffix,
+):
+    if not api_base:
+        return ""
+
+    if not suffix:
+        return ""
+
+    clean_base = (
+        api_base
         .replace(
             "\\/",
             "/",
         )
-        .replace(
-            "\\u002F",
-            "/",
-        )
-        .replace(
-            "\\u002f",
-            "/",
-        )
+        .strip()
     )
 
-    # Remove accidentally encoded quote marks.
-    while (
-        cleaned.lower().endswith(
-            "%22"
+    clean_suffix = (
+        suffix
+        .replace(
+            "\\/",
+            "/",
         )
-        or
-        cleaned.lower().endswith(
-            "%27"
-        )
+        .strip()
+    )
+
+    if not clean_suffix:
+        return ""
+
+    absolute_base = urljoin(
+        ECHA_BASE_URL,
+        clean_base,
+    )
+
+    if not absolute_base.endswith(
+        "/"
     ):
-        cleaned = (
-            cleaned[:-3]
+        absolute_base = (
+            absolute_base
+            + "/"
         )
 
-    cleaned = (
-        cleaned.rstrip(
-            "\"'"
+    clean_suffix = (
+        clean_suffix.lstrip(
+            "/"
         )
     )
 
     return urljoin(
-        base_url,
-        cleaned,
+        absolute_base,
+        clean_suffix,
     )
 
 
 # --------------------------------------------------
-# ALLOWED URL CHECK
+# FIND ALL LISTS IN JSON
 # --------------------------------------------------
-def is_allowed_url(
-    url,
-):
-    try:
-        parsed = urlparse(
-            url
-        )
-
-    except Exception:
-        return False
-
-    return (
-        parsed.scheme
-        in {
-            "http",
-            "https",
-        }
-        and
-        (
-            parsed.hostname
-            or ""
-        ).lower()
-        ==
-        "chem.echa.europa.eu"
-    )
-
-
-# --------------------------------------------------
-# JAVASCRIPT CHECK
-# --------------------------------------------------
-def looks_like_javascript(
-    response,
-):
-    if response is None:
-        return False
-
-    content_type = (
-        response.headers
-        .get(
-            "content-type",
-            "",
-        )
-        .lower()
-    )
-
-    start = (
-        response.text
-        or ""
-    )[:1000].lower()
-
-    if (
-        "<!doctype html"
-        in start
-    ):
-        return False
-
-    if re.search(
-        r"<html\b",
-        start,
-    ):
-        return False
-
-    if (
-        "javascript"
-        in content_type
-    ):
-        return True
-
-    return (
-        urlparse(
-            response.url
-        )
-        .path
-        .lower()
-        .endswith(".js")
-    )
-
-
-# --------------------------------------------------
-# EXTRACT JS REFERENCES FROM JSON
-# --------------------------------------------------
-def extract_json_file_references(
+def find_json_lists(
     value,
-    base_url,
     path="root",
     results=None,
 ):
@@ -331,804 +602,718 @@ def extract_json_file_references(
 
     if isinstance(
         value,
+        list,
+    ):
+        results.append(
+            {
+                "path": (
+                    path
+                ),
+                "length": len(
+                    value
+                ),
+                "items": (
+                    value
+                ),
+            }
+        )
+
+        for index, item in enumerate(
+            value
+        ):
+            find_json_lists(
+                value=item,
+                path=(
+                    f"{path}"
+                    f"[{index}]"
+                ),
+                results=results,
+            )
+
+    elif isinstance(
+        value,
         dict,
     ):
-        for key, nested in (
+        for key, nested_value in (
             value.items()
         ):
-            extract_json_file_references(
-                value=nested,
-                base_url=base_url,
+            find_json_lists(
+                value=nested_value,
                 path=(
                     f"{path}.{key}"
                 ),
                 results=results,
             )
 
-    elif isinstance(
-        value,
-        list,
-    ):
-        for index, nested in enumerate(
-            value
-        ):
-            extract_json_file_references(
-                value=nested,
-                base_url=base_url,
-                path=(
-                    f"{path}[{index}]"
-                ),
-                results=results,
-            )
-
-    elif isinstance(
-        value,
-        str,
-    ):
-        lower_value = (
-            value.lower()
-        )
-
-        if (
-            lower_value.endswith(
-                ".js"
-            )
-            or
-            ".js?"
-            in lower_value
-        ):
-            url = clean_discovered_url(
-                value=value,
-                base_url=base_url,
-            )
-
-            if is_allowed_url(
-                url
-            ):
-                results.append(
-                    {
-                        "path": (
-                            path
-                        ),
-                        "value": (
-                            value
-                        ),
-                        "url": (
-                            url
-                        ),
-                    }
-                )
-
     return results
 
 
 # --------------------------------------------------
-# EXTRACT JS REFERENCES FROM TEXT
+# SCORE CANDIDATE LIST
 # --------------------------------------------------
-def extract_script_references(
-    text,
-    source_url,
+def score_json_list(
+    candidate,
 ):
-    if not text:
-        return []
-
-    candidates = []
-
-    patterns = [
-        (
-            r'''["']'''
-            r'''([^"']+\.js'''
-            r'''(?:\?[^"']*)?)'''
-            r'''["']'''
-        ),
-        (
-            r'''import\s*\(\s*'''
-            r'''["']'''
-            r'''([^"']+)'''
-            r'''["']'''
-            r'''\s*\)'''
-        ),
-        (
-            r'''(?:chunk|main|runtime|polyfills)-'''
-            r'''[A-Za-z0-9_-]+\.js'''
-        ),
-    ]
-
-    for pattern in patterns:
-        matches = re.findall(
-            pattern,
-            text,
-            flags=re.IGNORECASE,
-        )
-
-        candidates.extend(
-            matches
-        )
-
-    urls = []
-    seen = set()
-
-    for candidate in candidates:
-        url = clean_discovered_url(
-            value=candidate,
-            base_url=source_url,
-        )
-
-        if not is_allowed_url(
-            url
-        ):
-            continue
-
-        path = (
-            urlparse(
-                url
-            )
-            .path
-            .lower()
-        )
-
-        if not path.endswith(
-            ".js"
-        ):
-            continue
-
-        if url in seen:
-            continue
-
-        seen.add(
-            url
-        )
-
-        urls.append(
-            url
-        )
-
-    return urls
-
-
-# --------------------------------------------------
-# FIND RELEVANT CODE CONTEXT
-# --------------------------------------------------
-def find_contexts(
-    text,
-    source,
-):
-    if not text:
-        return []
-
-    lower_text = (
-        text.lower()
+    items = candidate.get(
+        "items"
     )
 
-    contexts = []
-    seen = set()
+    if not isinstance(
+        items,
+        list,
+    ):
+        return -1
 
-    for term in SEARCH_TERMS:
-        start = 0
+    if not items:
+        return 0
 
-        term_lower = (
-            term.lower()
-        )
-
-        while True:
-            position = (
-                lower_text.find(
-                    term_lower,
-                    start,
-                )
-            )
-
-            if position < 0:
-                break
-
-            context_start = max(
-                0,
-                position - 800,
-            )
-
-            context_end = min(
-                len(text),
-                (
-                    position
-                    + len(term)
-                    + 1800
-                ),
-            )
-
-            context = text[
-                context_start:
-                context_end
-            ]
-
-            context = (
-                context
-                .replace(
-                    "\\/",
-                    "/",
-                )
-                .replace(
-                    "\\u002F",
-                    "/",
-                )
-                .replace(
-                    "\\u002f",
-                    "/",
-                )
-            )
-
-            context = re.sub(
-                r"\s+",
-                " ",
-                context,
-            ).strip()
-
-            key = (
-                term_lower,
-                context[:600],
-            )
-
-            if key not in seen:
-                seen.add(
-                    key
-                )
-
-                contexts.append(
-                    {
-                        "source": (
-                            source
-                        ),
-                        "term": (
-                            term
-                        ),
-                        "context": (
-                            context
-                        ),
-                    }
-                )
-
-            start = (
-                position
-                + len(term)
-            )
-
-            if (
-                len(contexts)
-                >= 250
-            ):
-                return contexts
-
-    return contexts
-
-
-# --------------------------------------------------
-# EXTRACT POSSIBLE ENDPOINT FRAGMENTS
-# --------------------------------------------------
-def extract_endpoint_fragments(
-    text,
-    source,
-):
-    fragments = []
-    seen = set()
-
-    patterns = [
-        (
-            r'''["']'''
-            r'''([^"']*'''
-            r'''(?:asset-owner|assetowner|'''
-            r'''registrants|registrant)'''
-            r'''[^"']*)'''
-            r'''["']'''
-        ),
-        (
-            r'''["']'''
-            r'''([^"']*'''
-            r'''api-dossier-list'''
-            r'''[^"']*)'''
-            r'''["']'''
-        ),
-        (
-            r'''["']'''
-            r'''([^"']*'''
-            r'''(?:pageIndex|pageSize|rmlId)'''
-            r'''[^"']*)'''
-            r'''["']'''
-        ),
-    ]
-
-    for pattern in patterns:
-        matches = re.findall(
-            pattern,
-            text or "",
-            flags=re.IGNORECASE,
-        )
-
-        for match in matches:
-            value = re.sub(
-                r"\s+",
-                " ",
-                str(match),
-            ).strip()
-
-            if not value:
-                continue
-
-            if len(
-                value
-            ) > 1000:
-                continue
-
-            if value in seen:
-                continue
-
-            seen.add(
-                value
-            )
-
-            fragments.append(
-                {
-                    "source": (
-                        source
-                    ),
-                    "fragment": (
-                        value
-                    ),
-                }
-            )
-
-    return fragments
-
-
-# --------------------------------------------------
-# FETCH JSON RESOURCE
-# --------------------------------------------------
-def fetch_json_resource(
-    session,
-    url,
-):
-    response, error = safe_get(
-        session=session,
-        url=url,
-        referer=OVERVIEW_URL,
+    score = len(
+        items
     )
 
-    if response is None:
-        return {
-            "url": (
-                url
-            ),
-            "status": None,
-            "content_type": "",
-            "bytes": 0,
-            "json": None,
-            "text": "",
-            "error": (
-                error
-            ),
+    relevant_keys = {
+        "name",
+        "address",
+        "status",
+        "registrantname",
+        "registrationstatus",
+        "assetownername",
+        "legalentityname",
+    }
+
+    dictionary_items = [
+        item
+        for item in items[:10]
+        if isinstance(
+            item,
+            dict,
+        )
+    ]
+
+    for item in dictionary_items:
+        keys = {
+            str(key).lower()
+            for key in item.keys()
         }
 
-    try:
-        body = (
-            response.json()
+        score += (
+            len(
+                keys
+                & relevant_keys
+            )
+            * 20
         )
 
-    except ValueError:
-        body = None
+    candidate_path = (
+        candidate.get(
+            "path",
+            "",
+        )
+        .lower()
+    )
 
-    return {
-        "url": (
-            response.url
-        ),
-        "status": (
-            response.status_code
-        ),
-        "content_type": (
-            response.headers.get(
-                "content-type",
-                "",
-            )
-        ),
-        "bytes": len(
-            response.content
-        ),
-        "json": (
-            body
-        ),
-        "text": (
-            response.text
-            or ""
-        ),
-        "error": None,
-    }
+    if any(
+        keyword in candidate_path
+        for keyword in (
+            "registrant",
+            "item",
+            "result",
+            "content",
+            "data",
+        )
+    ):
+        score += 50
+
+    return score
 
 
 # --------------------------------------------------
-# ANALYSE JAVASCRIPT TREE
+# SELECT MOST LIKELY RESULT LIST
 # --------------------------------------------------
-def analyse_javascript_tree(
-    session,
-    initial_urls,
+def select_result_list(
+    json_body,
 ):
-    pending = deque(
-        (
-            url,
-            DOSSIER_LIST_REMOTE_ENTRY,
-            0,
-        )
-        for url
-        in initial_urls
+    if isinstance(
+        json_body,
+        list,
+    ):
+        return {
+            "path": "root",
+            "items": json_body,
+        }
+
+    lists = find_json_lists(
+        json_body
     )
 
-    visited = set()
+    if not lists:
+        return {
+            "path": "",
+            "items": [],
+        }
 
-    rows = []
-    contexts = []
-    fragments = []
-
-    while (
-        pending
-        and
-        len(visited) < MAX_FILES
-    ):
+    scored_lists = [
         (
-            url,
-            parent,
-            depth,
-        ) = pending.popleft()
-
-        if url in visited:
-            continue
-
-        visited.add(
-            url
-        )
-
-        response, error = safe_get(
-            session=session,
-            url=url,
-            referer=(
-                parent
-                if parent.startswith(
-                    "http"
-                )
-                else OVERVIEW_URL
+            score_json_list(
+                candidate
             ),
+            candidate,
         )
+        for candidate in lists
+    ]
 
-        if response is None:
-            rows.append(
-                {
-                    "Depth": (
-                        depth
-                    ),
-                    "URL": (
-                        url
-                    ),
-                    "HTTP": None,
-                    "Content-Type": "",
-                    "Bytes": 0,
-                    "JavaScript": False,
-                    "Children": 0,
-                    "Contexts": 0,
-                    "Error": (
-                        error
-                    ),
-                }
-            )
+    scored_lists.sort(
+        key=lambda row: row[0],
+        reverse=True,
+    )
 
-            continue
+    best_score, best_candidate = (
+        scored_lists[0]
+    )
 
-        javascript = (
-            looks_like_javascript(
-                response
-            )
-        )
-
-        children = []
-        file_contexts = []
-        file_fragments = []
-
-        if javascript:
-            children = (
-                extract_script_references(
-                    text=(
-                        response.text
-                    ),
-                    source_url=(
-                        response.url
-                    ),
-                )
-            )
-
-            file_contexts = (
-                find_contexts(
-                    text=(
-                        response.text
-                    ),
-                    source=(
-                        response.url
-                    ),
-                )
-            )
-
-            file_fragments = (
-                extract_endpoint_fragments(
-                    text=(
-                        response.text
-                    ),
-                    source=(
-                        response.url
-                    ),
-                )
-            )
-
-        rows.append(
-            {
-                "Depth": (
-                    depth
-                ),
-                "URL": (
-                    response.url
-                ),
-                "HTTP": (
-                    response.status_code
-                ),
-                "Content-Type": (
-                    response.headers.get(
-                        "content-type",
-                        "",
-                    )
-                ),
-                "Bytes": len(
-                    response.content
-                ),
-                "JavaScript": (
-                    javascript
-                ),
-                "Children": len(
-                    children
-                ),
-                "Contexts": len(
-                    file_contexts
-                ),
-                "Error": None,
-            }
-        )
-
-        contexts.extend(
-            file_contexts
-        )
-
-        fragments.extend(
-            file_fragments
-        )
-
-        for child in children:
-            if child in visited:
-                continue
-
-            pending.append(
-                (
-                    child,
-                    response.url,
-                    depth + 1,
-                )
-            )
+    if best_score <= 0:
+        return {
+            "path": "",
+            "items": [],
+        }
 
     return {
-        "files": (
-            rows
+        "path": (
+            best_candidate[
+                "path"
+            ]
         ),
-        "contexts": (
-            contexts
-        ),
-        "fragments": (
-            fragments
+        "items": (
+            best_candidate[
+                "items"
+            ]
         ),
     }
 
 
 # --------------------------------------------------
-# COMPLETE DISCOVERY
+# RECURSIVE FIELD LOOKUP
 # --------------------------------------------------
-def run_discovery():
-    session = (
-        create_session()
-    )
+def find_field(
+    value,
+    possible_keys,
+):
+    possible_keys = {
+        key.lower()
+        for key in possible_keys
+    }
 
-    # ----------------------------------
-    # 1. DOSSIER LIST REMOTE ENTRY
-    # ----------------------------------
-    remote_entry = (
-        fetch_json_resource(
-            session=session,
-            url=(
-                DOSSIER_LIST_REMOTE_ENTRY
-            ),
-        )
-    )
-
-    # ----------------------------------
-    # 2. RUNTIME CONFIG
-    # ----------------------------------
-    runtime_config = (
-        fetch_json_resource(
-            session=session,
-            url=(
-                RUNTIME_CONFIG_URL
-            ),
-        )
-    )
-
-    initial_scripts = []
-    manifest_references = []
-
-    # ----------------------------------
-    # EXTRACT JS FROM MANIFEST JSON
-    # ----------------------------------
-    if (
-        remote_entry[
-            "json"
-        ]
-        is not None
+    if isinstance(
+        value,
+        dict,
     ):
-        manifest_references = (
-            extract_json_file_references(
-                value=(
-                    remote_entry[
-                        "json"
-                    ]
-                ),
-                base_url=(
-                    DOSSIER_LIST_REMOTE_ENTRY
-                ),
+        for key, nested_value in (
+            value.items()
+        ):
+            if (
+                str(key).lower()
+                in possible_keys
+            ):
+                if not isinstance(
+                    nested_value,
+                    (
+                        dict,
+                        list,
+                    ),
+                ):
+                    return nested_value
+
+        for nested_value in (
+            value.values()
+        ):
+            result = find_field(
+                nested_value,
+                possible_keys,
             )
-        )
 
-        initial_scripts.extend(
-            item[
-                "url"
-            ]
-            for item
-            in manifest_references
-        )
+            if result not in (
+                None,
+                "",
+            ):
+                return result
 
-    # ----------------------------------
-    # ALSO CHECK RAW MANIFEST TEXT
-    # ----------------------------------
-    initial_scripts.extend(
-        extract_script_references(
-            text=(
-                remote_entry[
-                    "text"
-                ]
-            ),
-            source_url=(
-                DOSSIER_LIST_REMOTE_ENTRY
-            ),
-        )
-    )
-
-    # ----------------------------------
-    # DEDUPLICATE
-    # ----------------------------------
-    deduplicated_scripts = []
-
-    seen = set()
-
-    for url in initial_scripts:
-        if url in seen:
-            continue
-
-        seen.add(
-            url
-        )
-
-        deduplicated_scripts.append(
-            url
-        )
-
-    # ----------------------------------
-    # ANALYSE DOSSIER LIST JS
-    # ----------------------------------
-    javascript = (
-        analyse_javascript_tree(
-            session=session,
-            initial_urls=(
-                deduplicated_scripts
-            ),
-        )
-    )
-
-    # ----------------------------------
-    # COMBINE CONTEXTS
-    # ----------------------------------
-    all_contexts = list(
-        javascript[
-            "contexts"
-        ]
-    )
-
-    if remote_entry[
-        "text"
-    ]:
-        all_contexts.extend(
-            find_contexts(
-                text=(
-                    remote_entry[
-                        "text"
-                    ]
-                ),
-                source=(
-                    remote_entry[
-                        "url"
-                    ]
-                ),
+    elif isinstance(
+        value,
+        list,
+    ):
+        for item in value:
+            result = find_field(
+                item,
+                possible_keys,
             )
-        )
 
-    if runtime_config[
-        "text"
-    ]:
-        all_contexts.extend(
-            find_contexts(
-                text=(
-                    runtime_config[
-                        "text"
-                    ]
-                ),
-                source=(
-                    runtime_config[
-                        "url"
-                    ]
-                ),
-            )
-        )
+            if result not in (
+                None,
+                "",
+            ):
+                return result
 
-    # ----------------------------------
-    # COMBINE ENDPOINT FRAGMENTS
-    # ----------------------------------
-    all_fragments = list(
-        javascript[
-            "fragments"
-        ]
+    return None
+
+
+# --------------------------------------------------
+# NORMALISE REGISTRANT
+# --------------------------------------------------
+def normalise_registrant(
+    item,
+):
+    if not isinstance(
+        item,
+        dict,
+    ):
+        return {
+            "Name": (
+                normalise_text(
+                    item
+                )
+            ),
+            "Address": "",
+            "Status": "",
+            "ID": "",
+        }
+
+    name = find_field(
+        item,
+        {
+            "name",
+            "registrantName",
+            "assetOwnerName",
+            "legalEntityName",
+            "organisationName",
+            "organizationName",
+            "companyName",
+        },
     )
 
-    all_fragments.extend(
-        extract_endpoint_fragments(
-            text=(
-                remote_entry[
-                    "text"
-                ]
-            ),
-            source=(
-                remote_entry[
-                    "url"
-                ]
-            ),
-        )
+    address = find_field(
+        item,
+        {
+            "address",
+            "registrantAddress",
+            "assetOwnerAddress",
+            "fullAddress",
+            "formattedAddress",
+        },
+    )
+
+    status = find_field(
+        item,
+        {
+            "status",
+            "registrationStatus",
+            "registrantStatus",
+            "assetOwnerStatus",
+        },
+    )
+
+    identifier = find_field(
+        item,
+        {
+            "id",
+            "uuid",
+            "externalId",
+            "assetOwnerId",
+            "legalEntityId",
+        },
     )
 
     return {
-        "remote_entry": (
-            remote_entry
+        "Name": (
+            normalise_text(
+                name
+            )
         ),
-        "runtime_config": (
-            runtime_config
+        "Address": (
+            normalise_text(
+                address
+            )
         ),
-        "manifest_references": (
-            manifest_references
+        "Status": (
+            normalise_text(
+                status
+            )
         ),
-        "initial_scripts": (
-            deduplicated_scripts
+        "ID": (
+            normalise_text(
+                identifier
+            )
         ),
-        "javascript": (
-            javascript
+    }
+
+
+# --------------------------------------------------
+# FIND TOTAL COUNT
+# --------------------------------------------------
+def find_total_count(
+    value,
+):
+    total_keys = {
+        "total",
+        "totalcount",
+        "totalitems",
+        "totalelements",
+        "totalresults",
+    }
+
+    if isinstance(
+        value,
+        dict,
+    ):
+        for key, nested_value in (
+            value.items()
+        ):
+            if (
+                str(key).lower()
+                in total_keys
+                and
+                isinstance(
+                    nested_value,
+                    (
+                        int,
+                        float,
+                    ),
+                )
+            ):
+                return int(
+                    nested_value
+                )
+
+        for nested_value in (
+            value.values()
+        ):
+            result = (
+                find_total_count(
+                    nested_value
+                )
+            )
+
+            if result is not None:
+                return result
+
+    elif isinstance(
+        value,
+        list,
+    ):
+        for item in value:
+            result = find_total_count(
+                item
+            )
+
+            if result is not None:
+                return result
+
+    return None
+
+
+# --------------------------------------------------
+# RUN COMPLETE TEST
+# --------------------------------------------------
+def run_test():
+    session = create_session()
+
+    # ----------------------------------
+    # RUNTIME CONFIGURATION
+    # ----------------------------------
+    runtime_response, runtime_error = (
+        safe_get(
+            session=session,
+            url=RUNTIME_CONFIG_URL,
+            referer=OVERVIEW_URL,
+        )
+    )
+
+    runtime_json = (
+        parse_json_response(
+            runtime_response
+        )
+    )
+
+    runtime_registrants_api_url = ""
+
+    if runtime_json is not None:
+        runtime_value = find_json_key(
+            runtime_json,
+            "registrantsApiUrl",
+        )
+
+        if runtime_value is not None:
+            runtime_registrants_api_url = (
+                normalise_text(
+                    runtime_value
+                )
+            )
+
+    # ----------------------------------
+    # DOSSIER LIST JAVASCRIPT
+    # ----------------------------------
+    javascript_response, javascript_error = (
+        safe_get(
+            session=session,
+            url=(
+                DOSSIER_LIST_WEB_COMPONENTS_URL
+            ),
+            referer=OVERVIEW_URL,
+        )
+    )
+
+    javascript_text = ""
+
+    if javascript_response is not None:
+        javascript_text = (
+            javascript_response.text
+            or ""
+        )
+
+    default_api_url = (
+        extract_default_registrants_api_url(
+            javascript_text
+        )
+    )
+
+    concat_result = (
+        extract_registrants_concat_argument(
+            javascript_text
+        )
+    )
+
+    registrant_strings = (
+        extract_registrant_strings(
+            javascript_text
+        )
+    )
+
+    final_api_base = (
+        runtime_registrants_api_url
+        or
+        default_api_url
+    )
+
+    endpoint = (
+        build_registrants_endpoint(
+            api_base=(
+                final_api_base
+            ),
+            suffix=(
+                concat_result[
+                    "literal_value"
+                ]
+            ),
+        )
+    )
+
+    # ----------------------------------
+    # ONLY REQUEST WHEN EXACTLY EXTRACTED
+    # ----------------------------------
+    api_response = None
+    api_error = None
+    api_json = None
+
+    api_params = {
+        "rmlId": RML_ID,
+        "pageIndex": 1,
+        "pageSize": 100,
+    }
+
+    if endpoint:
+        api_response, api_error = (
+            safe_get(
+                session=session,
+                url=endpoint,
+                params=api_params,
+                referer=OVERVIEW_URL,
+            )
+        )
+
+        api_json = (
+            parse_json_response(
+                api_response
+            )
+        )
+
+    selected_list = {
+        "path": "",
+        "items": [],
+    }
+
+    registrants = []
+
+    total_count = None
+
+    if api_json is not None:
+        selected_list = (
+            select_result_list(
+                api_json
+            )
+        )
+
+        registrants = [
+            normalise_registrant(
+                item
+            )
+            for item in (
+                selected_list[
+                    "items"
+                ]
+            )
+        ]
+
+        total_count = (
+            find_total_count(
+                api_json
+            )
+        )
+
+    return {
+        "runtime": {
+            "status": (
+                runtime_response.status_code
+                if runtime_response
+                is not None
+                else None
+            ),
+            "content_type": (
+                runtime_response.headers.get(
+                    "content-type",
+                    "",
+                )
+                if runtime_response
+                is not None
+                else ""
+            ),
+            "bytes": (
+                len(
+                    runtime_response.content
+                )
+                if runtime_response
+                is not None
+                else 0
+            ),
+            "json": (
+                runtime_json
+            ),
+            "error": (
+                runtime_error
+            ),
+        },
+        "javascript": {
+            "status": (
+                javascript_response.status_code
+                if javascript_response
+                is not None
+                else None
+            ),
+            "content_type": (
+                javascript_response.headers.get(
+                    "content-type",
+                    "",
+                )
+                if javascript_response
+                is not None
+                else ""
+            ),
+            "bytes": (
+                len(
+                    javascript_response.content
+                )
+                if javascript_response
+                is not None
+                else 0
+            ),
+            "error": (
+                javascript_error
+            ),
+        },
+        "runtime_api_base": (
+            runtime_registrants_api_url
         ),
-        "contexts": (
-            all_contexts
+        "default_api_base": (
+            default_api_url
         ),
-        "fragments": (
-            all_fragments
+        "final_api_base": (
+            final_api_base
+        ),
+        "concat_raw_argument": (
+            concat_result[
+                "raw_argument"
+            ]
+        ),
+        "concat_literal_value": (
+            concat_result[
+                "literal_value"
+            ]
+        ),
+        "concat_context": (
+            concat_result[
+                "context"
+            ]
+        ),
+        "registrant_strings": (
+            registrant_strings
+        ),
+        "endpoint": (
+            endpoint
+        ),
+        "api_params": (
+            api_params
+        ),
+        "api": {
+            "status": (
+                api_response.status_code
+                if api_response
+                is not None
+                else None
+            ),
+            "final_url": (
+                api_response.url
+                if api_response
+                is not None
+                else ""
+            ),
+            "content_type": (
+                api_response.headers.get(
+                    "content-type",
+                    "",
+                )
+                if api_response
+                is not None
+                else ""
+            ),
+            "bytes": (
+                len(
+                    api_response.content
+                )
+                if api_response
+                is not None
+                else 0
+            ),
+            "text": (
+                api_response.text
+                if api_response
+                is not None
+                else ""
+            ),
+            "json": (
+                api_json
+            ),
+            "error": (
+                api_error
+            ),
+        },
+        "selected_path": (
+            selected_list[
+                "path"
+            ]
+        ),
+        "registrants": (
+            registrants
+        ),
+        "total_count": (
+            total_count
         ),
     }
 
@@ -1137,7 +1322,7 @@ def run_discovery():
 # STREAMLIT INTERFACE
 # --------------------------------------------------
 st.title(
-    "ECHA Dossier List micro-frontend discovery"
+    "ECHA Registrants API Test"
 )
 
 st.caption(
@@ -1145,15 +1330,15 @@ st.caption(
 )
 
 st.write(
-    "V9 inspects only the ECHA dossierList "
-    "micro-frontend and its runtime configuration "
-    "to identify the exact registrants request."
+    "V10 extracts the exact registrants endpoint "
+    "construction from the ECHA dossierList "
+    "micro-frontend."
 )
 
 st.info(
-    "This test uses public ECHA resources only. "
-    "It does not use browser automation or attempt "
-    "to bypass access controls."
+    "An API request is only performed when both "
+    "the API base and the concatenated endpoint "
+    "suffix are extracted from actual ECHA code."
 )
 
 
@@ -1164,53 +1349,40 @@ st.subheader(
     "Known test substance"
 )
 
-columns = (
-    st.columns(3)
+metric_columns = (
+    st.columns(4)
 )
 
-columns[0].metric(
+metric_columns[0].metric(
     "CAS",
     CAS_NUMBER,
 )
 
-columns[1].metric(
+metric_columns[1].metric(
     "EC",
     EC_NUMBER,
 )
 
-columns[2].metric(
+metric_columns[2].metric(
     "rmlId",
     RML_ID,
 )
 
-st.write(
-    "Expected benchmark: "
-    "**42 registrants**."
+metric_columns[3].metric(
+    "Expected registrants",
+    EXPECTED_REGISTRANTS,
 )
 
 
 # --------------------------------------------------
-# RESOURCES
+# SOURCE RESOURCE
 # --------------------------------------------------
 st.subheader(
-    "Resources to inspect"
-)
-
-st.write(
-    "**dossierList remoteEntry:**"
+    "Source resource"
 )
 
 st.code(
-    DOSSIER_LIST_REMOTE_ENTRY,
-    language=None,
-)
-
-st.write(
-    "**Runtime configuration:**"
-)
-
-st.code(
-    RUNTIME_CONFIG_URL,
+    DOSSIER_LIST_WEB_COMPONENTS_URL,
     language=None,
 )
 
@@ -1219,331 +1391,479 @@ st.code(
 # RUN
 # --------------------------------------------------
 if st.button(
-    "Inspect dossierList micro-frontend",
+    "Extract and test registrants endpoint",
     type="primary",
 ):
     with st.spinner(
-        "Inspecting the ECHA dossierList "
-        "micro-frontend..."
+        "Analysing the ECHA dossierList code..."
     ):
         result = (
-            run_discovery()
+            run_test()
         )
 
     st.success(
-        "Discovery completed."
+        "Analysis completed."
     )
 
     # ----------------------------------
-    # 1. RESOURCE RESPONSES
+    # 1. SOURCE RESPONSES
     # ----------------------------------
     st.subheader(
-        "1. Resource responses"
+        "1. Source responses"
     )
 
-    response_rows = []
-
-    resources = [
-        (
-            "dossierList remoteEntry",
-            result[
-                "remote_entry"
-            ],
-        ),
-        (
-            "runtime configuration",
-            result[
-                "runtime_config"
-            ],
-        ),
+    source_rows = [
+        {
+            "Resource": (
+                "Runtime configuration"
+            ),
+            "HTTP": (
+                result[
+                    "runtime"
+                ][
+                    "status"
+                ]
+            ),
+            "Content-Type": (
+                result[
+                    "runtime"
+                ][
+                    "content_type"
+                ]
+            ),
+            "Bytes": (
+                result[
+                    "runtime"
+                ][
+                    "bytes"
+                ]
+            ),
+            "Error": (
+                result[
+                    "runtime"
+                ][
+                    "error"
+                ]
+            ),
+        },
+        {
+            "Resource": (
+                "dossierList web components"
+            ),
+            "HTTP": (
+                result[
+                    "javascript"
+                ][
+                    "status"
+                ]
+            ),
+            "Content-Type": (
+                result[
+                    "javascript"
+                ][
+                    "content_type"
+                ]
+            ),
+            "Bytes": (
+                result[
+                    "javascript"
+                ][
+                    "bytes"
+                ]
+            ),
+            "Error": (
+                result[
+                    "javascript"
+                ][
+                    "error"
+                ]
+            ),
+        },
     ]
-
-    for (
-        label,
-        resource,
-    ) in resources:
-        response_rows.append(
-            {
-                "Resource": (
-                    label
-                ),
-                "URL": (
-                    resource[
-                        "url"
-                    ]
-                ),
-                "HTTP": (
-                    resource[
-                        "status"
-                    ]
-                ),
-                "Content-Type": (
-                    resource[
-                        "content_type"
-                    ]
-                ),
-                "Bytes": (
-                    resource[
-                        "bytes"
-                    ]
-                ),
-                "Valid JSON": (
-                    resource[
-                        "json"
-                    ]
-                    is not None
-                ),
-                "Error": (
-                    resource[
-                        "error"
-                    ]
-                ),
-            }
-        )
 
     st.dataframe(
         pd.DataFrame(
-            response_rows
+            source_rows
         ),
         use_container_width=True,
         hide_index=True,
     )
 
     # ----------------------------------
-    # 2. JS REFERENCES
+    # 2. EXTRACTED API CONFIGURATION
     # ----------------------------------
     st.subheader(
-        "2. JavaScript references "
-        "in remoteEntry"
+        "2. Extracted registrants configuration"
     )
 
-    manifest_references = (
-        result[
-            "manifest_references"
-        ]
-    )
-
-    if manifest_references:
-        st.dataframe(
-            pd.DataFrame(
-                manifest_references
+    configuration_rows = [
+        {
+            "Setting": (
+                "Runtime registrantsApiUrl"
             ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    else:
-        st.warning(
-            "No JavaScript file references "
-            "were parsed from remoteEntry.json."
-        )
-
-    st.write(
-        "**Initial JavaScript URLs:**"
-    )
-
-    st.json(
-        result[
-            "initial_scripts"
-        ]
-    )
-
-    # ----------------------------------
-    # 3. JS FILES
-    # ----------------------------------
-    st.subheader(
-        "3. dossierList JavaScript files"
-    )
-
-    files = (
-        result[
-            "javascript"
-        ][
-            "files"
-        ]
-    )
-
-    if files:
-        st.dataframe(
-            pd.DataFrame(
-                files
+            "Value": (
+                result[
+                    "runtime_api_base"
+                ]
             ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    else:
-        st.warning(
-            "No dossierList JavaScript "
-            "files were analysed."
-        )
-
-    # ----------------------------------
-    # 4. ENDPOINT FRAGMENTS
-    # ----------------------------------
-    st.subheader(
-        "4. Registrant/API endpoint fragments"
-    )
-
-    fragments = (
-        result[
-            "fragments"
-        ]
-    )
-
-    if fragments:
-        st.dataframe(
-            pd.DataFrame(
-                fragments
+        },
+        {
+            "Setting": (
+                "Default API base from JavaScript"
             ),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    else:
-        st.warning(
-            "No registrant/API endpoint "
-            "fragments were found."
-        )
-
-    # ----------------------------------
-    # 5. CRITICAL CONTEXTS
-    # ----------------------------------
-    st.subheader(
-        "5. Critical code contexts"
-    )
-
-    contexts = (
-        result[
-            "contexts"
-        ]
-    )
-
-    critical_terms = {
-        "registrants",
-        "registrant",
-        "asset-owner",
-        "assetowner",
-        "dossierlistapiurl",
-        "dossierapiurl",
-        "api-dossier-list",
-        "listtype",
-        "pageindex",
-        "pagesize",
-        "rmlid",
-    }
-
-    critical_contexts = [
-        row
-        for row in contexts
-        if (
-            row.get(
-                "term",
-                "",
-            ).lower()
-            in critical_terms
-        )
+            "Value": (
+                result[
+                    "default_api_base"
+                ]
+            ),
+        },
+        {
+            "Setting": (
+                "Selected API base"
+            ),
+            "Value": (
+                result[
+                    "final_api_base"
+                ]
+            ),
+        },
+        {
+            "Setting": (
+                "Raw concat argument"
+            ),
+            "Value": (
+                result[
+                    "concat_raw_argument"
+                ]
+            ),
+        },
+        {
+            "Setting": (
+                "Literal concat value"
+            ),
+            "Value": (
+                result[
+                    "concat_literal_value"
+                ]
+            ),
+        },
+        {
+            "Setting": (
+                "Constructed endpoint"
+            ),
+            "Value": (
+                result[
+                    "endpoint"
+                ]
+            ),
+        },
     ]
 
-    if critical_contexts:
-        st.dataframe(
-            pd.DataFrame(
-                critical_contexts
-            ),
-            use_container_width=True,
-            hide_index=True,
+    st.dataframe(
+        pd.DataFrame(
+            configuration_rows
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    # ----------------------------------
+    # 3. SOURCE CONTEXT
+    # ----------------------------------
+    st.subheader(
+        "3. Exact registrantsUrl source context"
+    )
+
+    if result[
+        "concat_context"
+    ]:
+        st.code(
+            result[
+                "concat_context"
+            ],
+            language="javascript",
         )
 
     else:
         st.warning(
-            "No critical dossierList "
-            "contexts were found."
+            "The registrantsUrl construction "
+            "was not found."
         )
 
     # ----------------------------------
-    # 6. RUNTIME CONFIG
+    # 4. RELEVANT STRINGS
     # ----------------------------------
     st.subheader(
-        "6. Runtime configuration JSON"
+        "4. Registrant-related strings"
     )
 
-    runtime_config = (
-        result[
-            "runtime_config"
-        ]
-    )
-
-    if (
-        runtime_config[
-            "json"
-        ]
-        is not None
-    ):
+    if result[
+        "registrant_strings"
+    ]:
         st.json(
-            runtime_config[
-                "json"
+            result[
+                "registrant_strings"
             ]
         )
 
     else:
         st.warning(
-            "Runtime configuration did "
-            "not return valid JSON."
+            "No registrant-related string "
+            "literals were found."
         )
 
-        with st.expander(
-            "Raw runtime response",
-            expanded=False,
-        ):
-            st.code(
-                runtime_config[
-                    "text"
-                ][:10000],
-                language=None,
+    # ----------------------------------
+    # 5. API REQUEST RESULT
+    # ----------------------------------
+    st.subheader(
+        "5. Registrants API request"
+    )
+
+    if not result[
+        "endpoint"
+    ]:
+        st.warning(
+            "No API request was made because "
+            "the endpoint suffix could not be "
+            "extracted as a literal value."
+        )
+
+    else:
+        request_columns = (
+            st.columns(4)
+        )
+
+        request_columns[0].metric(
+            "HTTP",
+            (
+                result[
+                    "api"
+                ][
+                    "status"
+                ]
+                if result[
+                    "api"
+                ][
+                    "status"
+                ]
+                is not None
+                else
+                "Error"
+            ),
+        )
+
+        request_columns[1].metric(
+            "Response bytes",
+            result[
+                "api"
+            ][
+                "bytes"
+            ],
+        )
+
+        request_columns[2].metric(
+            "Valid JSON",
+            (
+                "Yes"
+                if result[
+                    "api"
+                ][
+                    "json"
+                ]
+                is not None
+                else
+                "No"
+            ),
+        )
+
+        request_columns[3].metric(
+            "Total reported",
+            (
+                result[
+                    "total_count"
+                ]
+                if result[
+                    "total_count"
+                ]
+                is not None
+                else
+                "Not found"
+            ),
+        )
+
+        st.write(
+            "**Final request URL:**"
+        )
+
+        st.code(
+            result[
+                "api"
+            ][
+                "final_url"
+            ],
+            language=None,
+        )
+
+        st.write(
+            "**Parameters:**"
+        )
+
+        st.json(
+            result[
+                "api_params"
+            ]
+        )
+
+        st.write(
+            "**Content-Type:** "
+            f"{result['api']['content_type']}"
+        )
+
+        if result[
+            "api"
+        ][
+            "error"
+        ]:
+            st.error(
+                result[
+                    "api"
+                ][
+                    "error"
+                ]
             )
 
     # ----------------------------------
-    # 7. REMOTE ENTRY
+    # 6. REGISTRANTS
     # ----------------------------------
     st.subheader(
-        "7. dossierList remoteEntry JSON"
+        "6. Registrants"
     )
 
-    remote_entry = (
+    registrants = (
         result[
-            "remote_entry"
+            "registrants"
         ]
     )
 
-    if (
-        remote_entry[
-            "json"
+    st.write(
+        "**Selected JSON list path:**"
+    )
+
+    st.code(
+        (
+            result[
+                "selected_path"
+            ]
+            or
+            "No list selected"
+        ),
+        language=None,
+    )
+
+    if registrants:
+        registrants_dataframe = (
+            pd.DataFrame(
+                registrants
+            )
+        )
+
+        non_empty_columns = [
+            column
+            for column in (
+                registrants_dataframe
+                .columns
+            )
+            if (
+                registrants_dataframe[
+                    column
+                ]
+                .astype(str)
+                .str.strip()
+                .ne("")
+                .any()
+            )
         ]
-        is not None
+
+        if non_empty_columns:
+            registrants_dataframe = (
+                registrants_dataframe[
+                    non_empty_columns
+                ]
+            )
+
+        st.dataframe(
+            registrants_dataframe,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    else:
+        st.warning(
+            "No registrant rows were extracted."
+        )
+
+    # ----------------------------------
+    # 7. RAW RESPONSES
+    # ----------------------------------
+    with st.expander(
+        "7. Runtime configuration JSON",
+        expanded=False,
     ):
-        with st.expander(
-            "Parsed remoteEntry.json",
-            expanded=False,
+        if (
+            result[
+                "runtime"
+            ][
+                "json"
+            ]
+            is not None
         ):
             st.json(
-                remote_entry[
+                result[
+                    "runtime"
+                ][
                     "json"
                 ]
             )
 
-    else:
-        st.warning(
-            "dossierList remoteEntry "
-            "did not return valid JSON."
-        )
-
-        with st.expander(
-            "Raw remoteEntry response",
-            expanded=False,
-        ):
-            st.code(
-                remote_entry[
-                    "text"
-                ][:10000],
-                language=None,
+        else:
+            st.write(
+                "No valid runtime JSON."
             )
+
+    with st.expander(
+        "8. Complete API JSON",
+        expanded=False,
+    ):
+        if (
+            result[
+                "api"
+            ][
+                "json"
+            ]
+            is not None
+        ):
+            st.json(
+                result[
+                    "api"
+                ][
+                    "json"
+                ]
+            )
+
+        else:
+            st.write(
+                "No valid API JSON."
+            )
+
+    with st.expander(
+        "9. Raw API response",
+        expanded=False,
+    ):
+        st.code(
+            result[
+                "api"
+            ][
+                "text"
+            ][:20000],
+            language=None,
+        )
