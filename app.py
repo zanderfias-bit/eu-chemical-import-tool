@@ -2021,6 +2021,19 @@ if (
                     st.write(
                         "**Last purchase date:**",
                         (
+                            last_purchase_date.strftime("%d/%m/%Y")
+                            if pd.notna(last_purchase_date)
+                            else "-"
+                        ),
+                    )
+
+                    st.write(
+                        "**Supplier on last purchase:**",
+                        supplier_text,
+                    )
+                    st.write(
+                        "**Last purchase date:**",
+                        (
                             last_purchase_date.strftime(
                                 "%d/%m/%Y"
                             )
@@ -2305,6 +2318,23 @@ if (
                         latest_sale.get(
                             "sales_date"
                         )
+                    )
+
+                    st.write(
+                        "**Date:**",
+                        (
+                            sales_date.strftime("%d/%m/%Y")
+                            if pd.notna(sales_date)
+                            else "-"
+                        ),
+                    )
+
+                    st.write(
+                        "**Sales Order:**",
+                        latest_sale.get(
+                            "sales_order",
+                            "-",
+                        ),
                     )
 
                     st.write(
