@@ -12,13 +12,13 @@ from utils.cas_validator import validate_cas
 from services.ecics_lookup import get_goods_code
 from services.taric_lookup import COUNTRY_CODES, get_taric
 from services.purchase_history import (
-    load_purchase_history,
     get_purchase_information,
+    load_purchase_history,
 )
 from services.sales_history import (
-    load_sales_history,
     get_customers_for_cas,
     get_sales_information,
+    load_sales_history,
 )
 
 
@@ -44,14 +44,8 @@ st.write(
 # ECHA API CONFIGURATION
 # --------------------------------------------------
 ECHA_BASE_URL = "https://chem.echa.europa.eu"
-
-SUBSTANCE_SEARCH_API_URL = (
-    f"{ECHA_BASE_URL}/api-substance/v1/substance"
-)
-
-REGISTRANTS_API_URL = (
-    f"{ECHA_BASE_URL}/api-registrants/v1/registrants"
-)
+SUBSTANCE_SEARCH_API_URL = f"{ECHA_BASE_URL}/api-substance/v1/substance"
+REGISTRANTS_API_URL = f"{ECHA_BASE_URL}/api-registrants/v1/registrants"
 
 CONNECT_TIMEOUT_SECONDS = 20
 READ_TIMEOUT_SECONDS = 90
@@ -74,14 +68,7 @@ def clean_text(value):
     if value is None:
         return ""
 
-    if isinstance(
-        value,
-        (
-            dict,
-            list,
-            tuple,
-        ),
-    ):
+    if isinstance(value, (dict, list, tuple)):
         return json.dumps(
             value,
             ensure_ascii=False,
@@ -104,8 +91,8 @@ def clean_text(value):
 
 def clean_identifier(value):
     """
-    Remove list brackets and quotation marks
-    from CAS and EC identifiers.
+    Format CAS and EC identifiers without
+    JSON list brackets or quotation marks.
     """
     if value is None:
         return ""
@@ -127,7 +114,8 @@ def clean_identifier(value):
 
             if (
                 cleaned_item
-                and cleaned_item not in cleaned_values
+                and
+                cleaned_item not in cleaned_values
             ):
                 cleaned_values.append(
                     cleaned_item
@@ -206,7 +194,7 @@ def echa_get(
 ):
     request_headers = (
         {
-            "Referer": referer,
+            "Referer": referer
         }
         if referer
         else None
@@ -401,7 +389,8 @@ def normalise_substance(
         substance_index.get(
             "rmlId"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "rmlId",
@@ -413,7 +402,8 @@ def normalise_substance(
         substance_index.get(
             "rmlName"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "rmlName",
@@ -429,10 +419,12 @@ def normalise_substance(
         substance_index.get(
             "rmlCas"
         )
-        or substance_index.get(
+        or
+        substance_index.get(
             "casNumber"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "rmlCas",
@@ -446,13 +438,16 @@ def normalise_substance(
         substance_index.get(
             "ecNumber"
         )
-        or substance_index.get(
+        or
+        substance_index.get(
             "rmlEc"
         )
-        or substance_index.get(
+        or
+        substance_index.get(
             "rmlEcNumber"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "ecNumber",
@@ -839,11 +834,13 @@ def get_echa_registrants(
         first_page[
             "error"
         ]
-        or first_page[
+        or
+        first_page[
             "status"
         ]
         != 200
-        or first_page[
+        or
+        first_page[
             "json"
         ]
         is None
@@ -933,11 +930,13 @@ def get_echa_registrants(
             page[
                 "error"
             ]
-            or page[
+            or
+            page[
                 "status"
             ]
             != 200
-            or page[
+            or
+            page[
                 "json"
             ]
             is None
@@ -1136,7 +1135,8 @@ if st.button(
         looks_like_cas(
             clean_query
         )
-        and not validate_cas(
+        and
+        not validate_cas(
             clean_query
         )
     ):
@@ -1303,7 +1303,8 @@ if search_debug is not None:
                 search_debug[
                     "response_url"
                 ]
-                or "No response URL"
+                or
+                "No response URL"
             ),
             language=None,
         )
@@ -1842,7 +1843,8 @@ if selected_row is not None:
 
     if (
         ecics_result
-        and ecics_result.get(
+        and
+        ecics_result.get(
             "success"
         )
     ):
@@ -1950,7 +1952,8 @@ if selected_row is not None:
 # --------------------------------------------------
 if (
     selected_row is not None
-    and purchase_df is not None
+    and
+    purchase_df is not None
 ):
     selected_cas = (
         selected_row.get(
@@ -2001,17 +2004,48 @@ if (
                         latest_suppliers
                     )
                     if latest_suppliers
-                    else "Supplier not available"
+                    else
+                    "Supplier not available"
                 )
 
-                purchase_columns = (
-                    st.columns(2)
-                )
+                purchase_columns = st.columns(2)
 
-                with purchase_columnslast_purchase_date = (
+                with purchase_columns[0]:
+                    last_purchase_date = purchase_info.get(
+                        "last_purchase_date"
+                    )
+
+                    st.write(
+                        "**Last purchase date:**",
+                        (
+                            last_purchase_date.strftime("%d/%m/%Y")
+                            if pd.notna(last_purchase_date)
+                            else "-"
+                        ),
+                    )
+
+                    st.write(
+                        "**Supplier on last purchase:**",
+                        supplier_text,
+                    )
+
+                with purchase_columns[1]:
+                    st.write(
+                        "**Purchase lines found:**",
                         purchase_info.get(
-                            "last_purchase_date"
-                        )
+                            "purchase_line_count",
+                            0,
+                        ),
+                    )
+
+                    st.write(
+                        "**Suppliers used:**",
+                        len(
+                            purchase_info.get(
+                                "all_suppliers",
+                                [],
+                            )
+                        ),
                     )
 
                     st.write(
@@ -2066,8 +2100,10 @@ if (
                     ]
                     .fillna("")
                     .astype(str)
-                    + " "
-                    + latest_purchases[
+                    +
+                    " "
+                    +
+                    latest_purchases[
                         "currency"
                     ]
                     .fillna("")
@@ -2195,7 +2231,8 @@ if (
 # --------------------------------------------------
 if (
     selected_row is not None
-    and sales_df is not None
+    and
+    sales_df is not None
 ):
     selected_cas = (
         selected_row.get(
@@ -2290,14 +2327,45 @@ if (
                     "### Last Sale"
                 )
 
-                sales_columns = (
-                    st.columns(2)
-                )
+                sales_columns = st.columns(2)
 
-                with sales_columnssales_date = (
+                with sales_columns[0]:
+                    sales_date = latest_sale.get(
+                        "sales_date"
+                    )
+
+                    st.write(
+                        "**Date:**",
+                        (
+                            sales_date.strftime("%d/%m/%Y")
+                            if pd.notna(sales_date)
+                            else "-"
+                        ),
+                    )
+
+                    st.write(
+                        "**Sales Order:**",
                         latest_sale.get(
-                            "sales_date"
-                        )
+                            "sales_order",
+                            "-",
+                        ),
+                    )
+
+                with sales_columns[1]:
+                    st.write(
+                        "**Unit Price:**",
+                        latest_sale.get(
+                            "sales_price",
+                            "-",
+                        ),
+                    )
+
+                    st.write(
+                        "**Quantity:**",
+                        latest_sale.get(
+                            "sales_quantity",
+                            "-",
+                        ),
                     )
 
                     st.write(
