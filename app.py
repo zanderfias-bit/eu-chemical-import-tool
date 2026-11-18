@@ -2008,14 +2008,11 @@ if (
                     "Supplier not available"
                 )
 
-                purchase_columns = (
-                    st.columns(2)
-                )
+                purchase_columns = st.columns(2)
 
-                with purchase_columnslast_purchase_date = (
-                        purchase_info.get(
-                            "last_purchase_date"
-                        )
+                with purchase_columns[0]:
+                    last_purchase_date = purchase_info.get(
+                        "last_purchase_date"
                     )
 
                     st.write(
@@ -2031,6 +2028,26 @@ if (
                         "**Supplier on last purchase:**",
                         supplier_text,
                     )
+
+                with purchase_columns[1]:
+                    st.write(
+                        "**Purchase lines found:**",
+                        purchase_info.get(
+                            "purchase_line_count",
+                            0,
+                        ),
+                    )
+
+                    st.write(
+                        "**Suppliers used:**",
+                        len(
+                            purchase_info.get(
+                                "all_suppliers",
+                                [],
+                            )
+                        ),
+                    )
+
                     st.write(
                         "**Last purchase date:**",
                         (
@@ -2310,14 +2327,11 @@ if (
                     "### Last Sale"
                 )
 
-                sales_columns = (
-                    st.columns(2)
-                )
+                sales_columns = st.columns(2)
 
-                with sales_columnssales_date = (
-                        latest_sale.get(
-                            "sales_date"
-                        )
+                with sales_columns[0]:
+                    sales_date = latest_sale.get(
+                        "sales_date"
                     )
 
                     st.write(
@@ -2333,6 +2347,23 @@ if (
                         "**Sales Order:**",
                         latest_sale.get(
                             "sales_order",
+                            "-",
+                        ),
+                    )
+
+                with sales_columns[1]:
+                    st.write(
+                        "**Unit Price:**",
+                        latest_sale.get(
+                            "sales_price",
+                            "-",
+                        ),
+                    )
+
+                    st.write(
+                        "**Quantity:**",
+                        latest_sale.get(
+                            "sales_quantity",
                             "-",
                         ),
                     )
