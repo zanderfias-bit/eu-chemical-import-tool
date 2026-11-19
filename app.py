@@ -2327,46 +2327,46 @@ if (
                     "### Last Sale"
                 )
 
-            sales_columns = st.columns(2)
+                sales_columns = st.columns(2)
 
-            with sales_columns[0]:
-                sales_date = latest_sale.get(
-                    "sales_date"
-                )
+                with sales_columns[0]:
+                    sales_date = latest_sale.get(
+                        "sales_date"
+                    )
 
-                st.write(
-                    "**Date:**",
-                    (
-                        sales_date.strftime("%d/%m/%Y")
-                        if pd.notna(sales_date)
-                        else "-"
-                    ),
-                )
+                    st.write(
+                        "**Date:**",
+                        (
+                            sales_date.strftime("%d/%m/%Y")
+                            if pd.notna(sales_date)
+                            else "-"
+                        ),
+                    )
 
-                st.write(
-                    "**Sales Order:**",
-                    latest_sale.get(
-                        "sales_order",
-                        "-",
-                    ),
-                )
+                    st.write(
+                        "**Sales Order:**",
+                        latest_sale.get(
+                            "sales_order",
+                            "-",
+                        ),
+                    )
 
-            with sales_columns[1]:
-                st.write(
-                    "**Unit Price:**",
-                    latest_sale.get(
-                        "sales_price",
-                        "-",
-                    ),
-                )
+                with sales_columns[1]:
+                    st.write(
+                        "**Unit Price:**",
+                        latest_sale.get(
+                            "sales_price",
+                            "-",
+                        ),
+                    )
 
-                st.write(
-                    "**Quantity:**",
-                    latest_sale.get(
-                        "sales_quantity",
-                        "-",
-                    ),
-                )
+                    st.write(
+                        "**Quantity:**",
+                        latest_sale.get(
+                            "sales_quantity",
+                            "-",
+                        ),
+                    )
 
                     st.write(
                         "**Date:**",
