@@ -1641,7 +1641,8 @@ if selected_row is not None:
                 st.columns(2)
             )
 
-            with ecics_columnsst.write(
+            with ecics_columns[0]:
+                st.write(
                     "Goods Code: "
                     f"{ecics_result.get('goods_code', '-')}"
                 )
@@ -1651,7 +1652,8 @@ if selected_row is not None:
                     f"{ecics_result.get('cus_number', '-')}"
                 )
 
-            with ecics_columnsst.write(
+            with ecics_columns[1]:
+                st.write(
                     "CAS Number: "
                     f"{ecics_result.get('cas_number', '-')}"
                 )
@@ -1844,7 +1846,8 @@ if (
 
                 purchase_columns = st.columns(2)
 
-                with purchase_columnslast_purchase_date = purchase_info.get(
+                with purchase_columns[0]:
+                    last_purchase_date = purchase_info.get(
                         "last_purchase_date"
                     )
 
@@ -1862,7 +1865,8 @@ if (
                         supplier_text,
                     )
 
-                with purchase_columnsst.write(
+                with purchase_columns[1]:
+                    st.write(
                         "**Purchase lines found:**",
                         purchase_info.get(
                             "purchase_line_count",
@@ -2124,7 +2128,8 @@ if (
 
                 sales_columns = st.columns(2)
 
-                with sales_columnssales_date = latest_sale.get(
+                with sales_columns[0]:
+                    sales_date = latest_sale.get(
                         "sales_date"
                     )
 
@@ -2145,7 +2150,8 @@ if (
                         ),
                     )
 
-                with sales_columnsst.write(
+                with sales_columns[1]:
+                    st.write(
                         "**Unit Price:**",
                         latest_sale.get(
                             "sales_price",

@@ -84,10 +84,16 @@ def clean_text(value):
     }:
         return ""
 
-    return " ".join(text.split())
+    return " ".join(
+        text.split()
+    )
 
 
 def clean_identifier(value):
+    """
+    Format CAS and EC identifiers without
+    JSON list brackets or quotation marks.
+    """
     if value is None:
         return ""
 
@@ -102,20 +108,34 @@ def clean_identifier(value):
         cleaned_values = []
 
         for item in value:
-            cleaned_item = clean_identifier(item)
+            cleaned_item = clean_identifier(
+                item
+            )
 
             if (
                 cleaned_item
-                and cleaned_item not in cleaned_values
+                and
+                cleaned_item not in cleaned_values
             ):
-                cleaned_values.append(cleaned_item)
+                cleaned_values.append(
+                    cleaned_item
+                )
 
-        return ", ".join(cleaned_values)
+        return ", ".join(
+            cleaned_values
+        )
 
-    if isinstance(value, dict):
-        return clean_text(value)
+    if isinstance(
+        value,
+        dict,
+    ):
+        return clean_text(
+            value
+        )
 
-    return clean_text(value)
+    return clean_text(
+        value
+    )
 
 
 def looks_like_cas(value):
@@ -130,7 +150,9 @@ def looks_like_cas(value):
 def create_echa_session():
     session = requests.Session()
 
-    session.headers.update(ECHA_HEADERS)
+    session.headers.update(
+        ECHA_HEADERS
+    )
 
     retry = Retry(
         total=2,
@@ -211,7 +233,9 @@ def echa_get(
         }
 
     try:
-        response_json = response.json()
+        response_json = (
+            response.json()
+        )
 
     except ValueError:
         response_json = None
@@ -223,7 +247,9 @@ def echa_get(
     }
 
 
-def extract_items(response_json):
+def extract_items(
+    response_json,
+):
     if not isinstance(
         response_json,
         dict,
@@ -244,7 +270,9 @@ def extract_items(response_json):
     return items
 
 
-def extract_state(response_json):
+def extract_state(
+    response_json,
+):
     if not isinstance(
         response_json,
         dict,
@@ -278,7 +306,9 @@ def find_first_field(
         value,
         dict,
     ):
-        for key, nested_value in value.items():
+        for key, nested_value in (
+            value.items()
+        ):
             if (
                 str(key).lower()
                 in wanted_keys
@@ -292,7 +322,9 @@ def find_first_field(
                 ):
                     return nested_value
 
-        for nested_value in value.values():
+        for nested_value in (
+            value.values()
+        ):
             result = find_first_field(
                 nested_value,
                 possible_keys,
@@ -326,7 +358,9 @@ def find_first_field(
 # --------------------------------------------------
 # ECHA SUBSTANCE SEARCH
 # --------------------------------------------------
-def normalise_substance(item):
+def normalise_substance(
+    item,
+):
     if not isinstance(
         item,
         dict,
@@ -355,7 +389,8 @@ def normalise_substance(item):
         substance_index.get(
             "rmlId"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "rmlId",
@@ -367,7 +402,8 @@ def normalise_substance(item):
         substance_index.get(
             "rmlName"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "rmlName",
@@ -383,10 +419,12 @@ def normalise_substance(item):
         substance_index.get(
             "rmlCas"
         )
-        or substance_index.get(
+        or
+        substance_index.get(
             "casNumber"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "rmlCas",
@@ -400,13 +438,16 @@ def normalise_substance(item):
         substance_index.get(
             "ecNumber"
         )
-        or substance_index.get(
+        or
+        substance_index.get(
             "rmlEc"
         )
-        or substance_index.get(
+        or
+        substance_index.get(
             "rmlEcNumber"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "ecNumber",
@@ -417,19 +458,31 @@ def normalise_substance(item):
         )
     )
 
-    clean_rml_id = clean_text(rml_id)
+    clean_rml_id = (
+        clean_text(
+            rml_id
+        )
+    )
 
     return {
-        "Name": clean_text(
-            substance_name
+        "Name": (
+            clean_text(
+                substance_name
+            )
         ),
-        "EC Number": clean_identifier(
-            ec_number
+        "EC Number": (
+            clean_identifier(
+                ec_number
+            )
         ),
-        "CAS Number": clean_identifier(
-            cas_number
+        "CAS Number": (
+            clean_identifier(
+                cas_number
+            )
         ),
-        "rmlId": clean_rml_id,
+        "rmlId": (
+            clean_rml_id
+        ),
         "URL": (
             f"{ECHA_BASE_URL}/"
             f"{clean_rml_id}/overview"
@@ -444,29 +497,44 @@ def substance_result_score(
     result,
     search_text,
 ):
-    query = clean_text(
-        search_text
-    ).lower()
+    query = (
+        clean_text(
+            search_text
+        )
+        .lower()
+    )
 
-    name = result.get(
-        "Name",
-        "",
-    ).lower()
+    name = (
+        result.get(
+            "Name",
+            "",
+        )
+        .lower()
+    )
 
-    cas_number = result.get(
-        "CAS Number",
-        "",
-    ).lower()
+    cas_number = (
+        result.get(
+            "CAS Number",
+            "",
+        )
+        .lower()
+    )
 
-    ec_number = result.get(
-        "EC Number",
-        "",
-    ).lower()
+    ec_number = (
+        result.get(
+            "EC Number",
+            "",
+        )
+        .lower()
+    )
 
-    rml_id = result.get(
-        "rmlId",
-        "",
-    ).lower()
+    rml_id = (
+        result.get(
+            "rmlId",
+            "",
+        )
+        .lower()
+    )
 
     if query and query == cas_number:
         return 100
@@ -499,12 +567,16 @@ def substance_result_score(
 def search_echa_api(
     search_text,
 ):
-    session = create_echa_session()
+    session = (
+        create_echa_session()
+    )
 
     params = {
         "pageIndex": 1,
         "pageSize": 100,
-        "searchText": search_text,
+        "searchText": (
+            search_text
+        ),
     }
 
     result = echa_get(
@@ -539,9 +611,11 @@ def search_echa_api(
         reverse=True,
     )
 
-    response = result[
-        "response"
-    ]
+    response = (
+        result[
+            "response"
+        ]
+    )
 
     return {
         "response_status": (
@@ -549,24 +623,65 @@ def search_echa_api(
             if response is not None
             else None
         ),
-        "error": result[
-            "error"
-        ],
-        "results": substances,
+        "response_url": (
+            response.url
+            if response is not None
+            else ""
+        ),
+        "response_content_type": (
+            response.headers.get(
+                "content-type",
+                "",
+            )
+            if response is not None
+            else ""
+        ),
+        "response_text": (
+            response.text
+            if response is not None
+            else ""
+        ),
+        "json": (
+            result[
+                "json"
+            ]
+        ),
+        "error": (
+            result[
+                "error"
+            ]
+        ),
+        "params": (
+            params
+        ),
+        "results": (
+            substances
+        ),
+        "state": (
+            extract_state(
+                result[
+                    "json"
+                ]
+            )
+        ),
     }
 
 
 # --------------------------------------------------
 # ECHA REGISTRANTS
 # --------------------------------------------------
-def normalise_registrant(item):
+def normalise_registrant(
+    item,
+):
     if not isinstance(
         item,
         dict,
     ):
         return {
-            "Registrant": clean_text(
-                item
+            "Registrant": (
+                clean_text(
+                    item
+                )
             ),
             "Address": "",
             "Status": "",
@@ -574,24 +689,32 @@ def normalise_registrant(item):
         }
 
     return {
-        "Registrant": clean_text(
-            item.get(
-                "name"
+        "Registrant": (
+            clean_text(
+                item.get(
+                    "name"
+                )
             )
         ),
-        "Address": clean_text(
-            item.get(
-                "address"
+        "Address": (
+            clean_text(
+                item.get(
+                    "address"
+                )
             )
         ),
-        "Status": clean_text(
-            item.get(
-                "registrationStatus"
+        "Status": (
+            clean_text(
+                item.get(
+                    "registrationStatus"
+                )
             )
         ),
-        "Details": clean_text(
-            item.get(
-                "details"
+        "Details": (
+            clean_text(
+                item.get(
+                    "details"
+                )
             )
         ),
     }
@@ -604,9 +727,15 @@ def get_registrant_page(
     page_size,
 ):
     params = {
-        "pageIndex": page_index,
-        "pageSize": page_size,
-        "rmlId": rml_id,
+        "pageIndex": (
+            page_index
+        ),
+        "pageSize": (
+            page_size
+        ),
+        "rmlId": (
+            rml_id
+        ),
     }
 
     result = echa_get(
@@ -619,9 +748,11 @@ def get_registrant_page(
         ),
     )
 
-    response = result[
-        "response"
-    ]
+    response = (
+        result[
+            "response"
+        ]
+    )
 
     return {
         "status": (
@@ -629,26 +760,50 @@ def get_registrant_page(
             if response is not None
             else None
         ),
+        "url": (
+            response.url
+            if response is not None
+            else ""
+        ),
+        "content_type": (
+            response.headers.get(
+                "content-type",
+                "",
+            )
+            if response is not None
+            else ""
+        ),
         "text": (
             response.text
             if response is not None
             else ""
         ),
-        "json": result[
-            "json"
-        ],
-        "error": result[
-            "error"
-        ],
-        "items": extract_items(
+        "json": (
             result[
                 "json"
             ]
         ),
-        "state": extract_state(
+        "error": (
             result[
-                "json"
+                "error"
             ]
+        ),
+        "params": (
+            params
+        ),
+        "items": (
+            extract_items(
+                result[
+                    "json"
+                ]
+            )
+        ),
+        "state": (
+            extract_state(
+                result[
+                    "json"
+                ]
+            )
         ),
     }
 
@@ -660,41 +815,74 @@ def get_registrant_page(
 def get_echa_registrants(
     rml_id,
 ):
-    session = create_echa_session()
+    session = (
+        create_echa_session()
+    )
 
     page_size = 100
 
-    first_page = get_registrant_page(
-        session=session,
-        rml_id=rml_id,
-        page_index=1,
-        page_size=page_size,
+    first_page = (
+        get_registrant_page(
+            session=session,
+            rml_id=rml_id,
+            page_index=1,
+            page_size=page_size,
+        )
     )
 
     if (
         first_page[
             "error"
         ]
-        or first_page[
+        or
+        first_page[
             "status"
         ]
         != 200
-        or first_page[
+        or
+        first_page[
             "json"
         ]
         is None
     ):
         return {
-            "status": first_page[
-                "status"
-            ],
-            "text": first_page[
-                "text"
-            ],
-            "error": first_page[
-                "error"
-            ],
+            "status": (
+                first_page[
+                    "status"
+                ]
+            ),
+            "url": (
+                first_page[
+                    "url"
+                ]
+            ),
+            "content_type": (
+                first_page[
+                    "content_type"
+                ]
+            ),
+            "text": (
+                first_page[
+                    "text"
+                ]
+            ),
+            "json": (
+                first_page[
+                    "json"
+                ]
+            ),
+            "error": (
+                first_page[
+                    "error"
+                ]
+            ),
+            "state": (
+                first_page[
+                    "state"
+                ]
+            ),
             "registrants": [],
+            "pages_loaded": 1,
         }
 
     all_items = list(
@@ -703,9 +891,11 @@ def get_echa_registrants(
         ]
     )
 
-    state = first_page[
-        "state"
-    ]
+    state = (
+        first_page[
+            "state"
+        ]
+    )
 
     try:
         total_pages = int(
@@ -721,26 +911,32 @@ def get_echa_registrants(
     ):
         total_pages = 1
 
+    pages_loaded = 1
+
     for page_index in range(
         2,
         total_pages + 1,
     ):
-        page = get_registrant_page(
-            session=session,
-            rml_id=rml_id,
-            page_index=page_index,
-            page_size=page_size,
+        page = (
+            get_registrant_page(
+                session=session,
+                rml_id=rml_id,
+                page_index=page_index,
+                page_size=page_size,
+            )
         )
 
         if (
             page[
                 "error"
             ]
-            or page[
+            or
+            page[
                 "status"
             ]
             != 200
-            or page[
+            or
+            page[
                 "json"
             ]
             is None
@@ -753,6 +949,8 @@ def get_echa_registrants(
             ]
         )
 
+        pages_loaded += 1
+
     registrants = [
         normalise_registrant(
             item
@@ -761,14 +959,41 @@ def get_echa_registrants(
     ]
 
     return {
-        "status": first_page[
-            "status"
-        ],
-        "text": first_page[
-            "text"
-        ],
+        "status": (
+            first_page[
+                "status"
+            ]
+        ),
+        "url": (
+            first_page[
+                "url"
+            ]
+        ),
+        "content_type": (
+            first_page[
+                "content_type"
+            ]
+        ),
+        "text": (
+            first_page[
+                "text"
+            ]
+        ),
+        "json": (
+            first_page[
+                "json"
+            ]
+        ),
         "error": None,
-        "registrants": registrants,
+        "state": (
+            state
+        ),
+        "registrants": (
+            registrants
+        ),
+        "pages_loaded": (
+            pages_loaded
+        ),
     }
 
 
@@ -793,6 +1018,7 @@ DEFAULT_STATE = {
     "search_results": [],
     "selected_result_index": 0,
     "last_search_query": "",
+    "echa_search_debug": None,
     "registrant_result": None,
     "registrant_rml_id": "",
 }
@@ -862,22 +1088,26 @@ except Exception as error:
 # --------------------------------------------------
 # SEARCH INPUTS
 # --------------------------------------------------
-search_query = st.text_input(
-    (
-        "CAS number, EC number, "
-        "substance name, or rmlId"
-    ),
-    placeholder=(
-        "For example: 128-37-0"
-    ),
+search_query = (
+    st.text_input(
+        (
+            "CAS number, EC number, "
+            "substance name, or rmlId"
+        ),
+        placeholder=(
+            "For example: 128-37-0"
+        ),
+    )
 )
 
-country = st.selectbox(
-    "Country of Origin",
-    options=list(
-        COUNTRY_CODES.keys()
-    ),
-    index=0,
+country = (
+    st.selectbox(
+        "Country of Origin",
+        options=list(
+            COUNTRY_CODES.keys()
+        ),
+        index=0,
+    )
 )
 
 
@@ -898,19 +1128,22 @@ if st.button(
             "EC number, substance name, "
             "or rmlId."
         )
+
         st.stop()
 
     if (
         looks_like_cas(
             clean_query
         )
-        and not validate_cas(
+        and
+        not validate_cas(
             clean_query
         )
     ):
         st.error(
             "Invalid CAS number."
         )
+
         st.stop()
 
     with st.spinner(
@@ -925,6 +1158,10 @@ if st.button(
     st.session_state[
         "last_search_query"
     ] = clean_query
+
+    st.session_state[
+        "echa_search_debug"
+    ] = search_result
 
     st.session_state[
         "search_results"
@@ -950,6 +1187,12 @@ if st.button(
         st.error(
             "The ECHA search "
             "could not be completed."
+        )
+
+        st.info(
+            search_result[
+                "error"
+            ]
         )
 
     elif (
@@ -983,29 +1226,41 @@ if st.button(
 # --------------------------------------------------
 selected_row = None
 
-search_results = st.session_state[
-    "search_results"
-]
+search_results = (
+    st.session_state[
+        "search_results"
+    ]
+)
 
 if search_results:
-    display_dataframe = pd.DataFrame(
-        [
-            {
-                "Name": result[
-                    "Name"
-                ],
-                "EC Number": result[
-                    "EC Number"
-                ],
-                "CAS Number": result[
-                    "CAS Number"
-                ],
-                "rmlId": result[
-                    "rmlId"
-                ],
-            }
-            for result in search_results
-        ]
+    display_dataframe = (
+        pd.DataFrame(
+            [
+                {
+                    "Name": (
+                        result[
+                            "Name"
+                        ]
+                    ),
+                    "EC Number": (
+                        result[
+                            "EC Number"
+                        ]
+                    ),
+                    "CAS Number": (
+                        result[
+                            "CAS Number"
+                        ]
+                    ),
+                    "rmlId": (
+                        result[
+                            "rmlId"
+                        ]
+                    ),
+                }
+                for result in search_results
+            ]
+        )
     )
 
     st.subheader(
@@ -1018,9 +1273,12 @@ if search_results:
         hide_index=True,
     )
 
-    if len(
-        search_results
-    ) == 1:
+    if (
+        len(
+            search_results
+        )
+        == 1
+    ):
         selected_index = 0
 
         st.info(
@@ -1048,10 +1306,12 @@ if search_results:
             ) - 1,
         )
 
-        selected_label = st.selectbox(
-            "Select substance",
-            options=result_labels,
-            index=safe_index,
+        selected_label = (
+            st.selectbox(
+                "Select substance",
+                options=result_labels,
+                index=safe_index,
+            )
         )
 
         selected_index = (
@@ -1064,9 +1324,11 @@ if search_results:
             "selected_result_index"
         ] = selected_index
 
-    selected_row = search_results[
-        selected_index
-    ]
+    selected_row = (
+        search_results[
+            selected_index
+        ]
+    )
 
     st.subheader(
         "Selected Substance"
@@ -1078,34 +1340,42 @@ if search_results:
 
     selected_columns[0].metric(
         "Name",
-        selected_row[
-            "Name"
-        ]
-        or "Unknown",
+        (
+            selected_row[
+                "Name"
+            ]
+            or "Unknown"
+        ),
     )
 
     selected_columns[1].metric(
         "EC Number",
-        selected_row[
-            "EC Number"
-        ]
-        or "Unknown",
+        (
+            selected_row[
+                "EC Number"
+            ]
+            or "Unknown"
+        ),
     )
 
     selected_columns[2].metric(
         "CAS Number",
-        selected_row[
-            "CAS Number"
-        ]
-        or "Unknown",
+        (
+            selected_row[
+                "CAS Number"
+            ]
+            or "Unknown"
+        ),
     )
 
     selected_columns[3].metric(
         "rmlId",
-        selected_row[
-            "rmlId"
-        ]
-        or "Unknown",
+        (
+            selected_row[
+                "rmlId"
+            ]
+            or "Unknown"
+        ),
     )
 
     if selected_row[
@@ -1146,8 +1416,10 @@ if selected_row is not None:
             ):
                 st.session_state[
                     "registrant_result"
-                ] = get_echa_registrants(
-                    selected_rml_id
+                ] = (
+                    get_echa_registrants(
+                        selected_rml_id
+                    )
                 )
 
             st.session_state[
@@ -1407,7 +1679,8 @@ if selected_row is not None:
 
     if (
         ecics_result
-        and ecics_result.get(
+        and
+        ecics_result.get(
             "success"
         )
     ):
@@ -1492,13 +1765,31 @@ if selected_row is not None:
                     )
                 )
 
+                if (
+                    "debug_links"
+                    in taric_result
+                ):
+                    with st.expander(
+                        "TARIC debug links",
+                        expanded=False,
+                    ):
+                        for link in (
+                            taric_result[
+                                "debug_links"
+                            ]
+                        ):
+                            st.write(
+                                link
+                            )
+
 
 # --------------------------------------------------
 # PURCHASE HISTORY LOOKUP
 # --------------------------------------------------
 if (
     selected_row is not None
-    and purchase_df is not None
+    and
+    purchase_df is not None
 ):
     selected_cas = (
         selected_row.get(
@@ -1549,27 +1840,22 @@ if (
                         latest_suppliers
                     )
                     if latest_suppliers
-                    else "Supplier not available"
+                    else
+                    "Supplier not available"
                 )
 
-                last_purchase_date = (
-                    purchase_info.get(
-                        "last_purchase_date"
-                    )
-                )
-
-                purchase_columns = (
-                    st.columns(2)
-                )
+                purchase_columns = st.columns(2)
 
                 with purchase_columns[0]:
+                    last_purchase_date = purchase_info.get(
+                        "last_purchase_date"
+                    )
+
                     st.write(
-                        "**Last purchase daterchase_date.strftime(
-                                "%d/%m/%Y"
-                            )
-                            if pd.notna(
-                                last_purchase_date
-                            )
+                        "**Last purchase date:**",
+                        (
+                            last_purchase_date.strftime("%d/%m/%Y")
+                            if pd.notna(last_purchase_date)
                             else "-"
                         ),
                     )
@@ -1579,7 +1865,8 @@ if (
                         supplier_text,
                     )
 
-                with purchase_columnsst.write(
+                with purchase_columns[1]:
+                    st.write(
                         "**Purchase lines found:**",
                         purchase_info.get(
                             "purchase_line_count",
@@ -1612,8 +1899,10 @@ if (
                     ]
                     .fillna("")
                     .astype(str)
-                    + " "
-                    + latest_purchases[
+                    +
+                    " "
+                    +
+                    latest_purchases[
                         "currency"
                     ]
                     .fillna("")
@@ -1683,7 +1972,8 @@ if (
                     history_columns = [
                         column
                         for column in history_columns
-                        if column in history.columns
+                        if column
+                        in history.columns
                     ]
 
                     st.dataframe(
@@ -1740,7 +2030,8 @@ if (
 # --------------------------------------------------
 if (
     selected_row is not None
-    and sales_df is not None
+    and
+    sales_df is not None
 ):
     selected_cas = (
         selected_row.get(
@@ -1772,7 +2063,9 @@ if (
 
         customer_options = [
             "All customers"
-        ] + (
+        ]
+
+        customer_options.extend(
             customers
             or []
         )
@@ -1821,9 +2114,7 @@ if (
                 )
 
                 latest_sale = (
-                    history.iloc[
-                        0
-                    ]
+                    history.iloc[0]
                 )
 
                 st.success(
@@ -1835,25 +2126,18 @@ if (
                     "### Last Sale"
                 )
 
-                sales_columns = (
-                    st.columns(2)
-                )
+                sales_columns = st.columns(2)
 
-                sales_date = (
-                    latest_sale.get(
+                with sales_columns[0]:
+                    sales_date = latest_sale.get(
                         "sales_date"
                     )
-                )
 
-                with sales_columnsst.write(
+                    st.write(
                         "**Date:**",
                         (
-                            sales_date.strftime(
-                                "%d/%m/%Y"
-                            )
-                            if pd.notna(
-                                sales_date
-                            )
+                            sales_date.strftime("%d/%m/%Y")
+                            if pd.notna(sales_date)
                             else "-"
                         ),
                     )
@@ -1866,7 +2150,8 @@ if (
                         ),
                     )
 
-                with sales_columnsst.write(
+                with sales_columns[1]:
+                    st.write(
                         "**Unit Price:**",
                         latest_sale.get(
                             "sales_price",
@@ -1901,7 +2186,8 @@ if (
                 history_columns = [
                     column
                     for column in history_columns
-                    if column in history.columns
+                    if column
+                    in history.columns
                 ]
 
                 st.dataframe(
