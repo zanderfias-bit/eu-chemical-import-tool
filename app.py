@@ -12,13 +12,13 @@ from utils.cas_validator import validate_cas
 from services.ecics_lookup import get_goods_code
 from services.taric_lookup import COUNTRY_CODES, get_taric
 from services.purchase_history import (
-    load_purchase_history,
     get_purchase_information,
+    load_purchase_history,
 )
 from services.sales_history import (
-    load_sales_history,
     get_customers_for_cas,
     get_sales_information,
+    load_sales_history,
 )
 
 
@@ -44,14 +44,8 @@ st.write(
 # ECHA API CONFIGURATION
 # --------------------------------------------------
 ECHA_BASE_URL = "https://chem.echa.europa.eu"
-
-SUBSTANCE_SEARCH_API_URL = (
-    f"{ECHA_BASE_URL}/api-substance/v1/substance"
-)
-
-REGISTRANTS_API_URL = (
-    f"{ECHA_BASE_URL}/api-registrants/v1/registrants"
-)
+SUBSTANCE_SEARCH_API_URL = f"{ECHA_BASE_URL}/api-substance/v1/substance"
+REGISTRANTS_API_URL = f"{ECHA_BASE_URL}/api-registrants/v1/registrants"
 
 CONNECT_TIMEOUT_SECONDS = 20
 READ_TIMEOUT_SECONDS = 90
@@ -74,14 +68,7 @@ def clean_text(value):
     if value is None:
         return ""
 
-    if isinstance(
-        value,
-        (
-            dict,
-            list,
-            tuple,
-        ),
-    ):
+    if isinstance(value, (dict, list, tuple)):
         return json.dumps(
             value,
             ensure_ascii=False,
@@ -104,8 +91,8 @@ def clean_text(value):
 
 def clean_identifier(value):
     """
-    Remove list brackets and quotation marks
-    from CAS and EC identifiers.
+    Format CAS and EC identifiers without
+    JSON list brackets or quotation marks.
     """
     if value is None:
         return ""
@@ -127,7 +114,8 @@ def clean_identifier(value):
 
             if (
                 cleaned_item
-                and cleaned_item not in cleaned_values
+                and
+                cleaned_item not in cleaned_values
             ):
                 cleaned_values.append(
                     cleaned_item
@@ -206,7 +194,7 @@ def echa_get(
 ):
     request_headers = (
         {
-            "Referer": referer,
+            "Referer": referer
         }
         if referer
         else None
@@ -245,7 +233,9 @@ def echa_get(
         }
 
     try:
-        response_json = response.json()
+        response_json = (
+            response.json()
+        )
 
     except ValueError:
         response_json = None
@@ -316,7 +306,9 @@ def find_first_field(
         value,
         dict,
     ):
-        for key, nested_value in value.items():
+        for key, nested_value in (
+            value.items()
+        ):
             if (
                 str(key).lower()
                 in wanted_keys
@@ -330,7 +322,9 @@ def find_first_field(
                 ):
                     return nested_value
 
-        for nested_value in value.values():
+        for nested_value in (
+            value.values()
+        ):
             result = find_first_field(
                 nested_value,
                 possible_keys,
@@ -395,7 +389,8 @@ def normalise_substance(
         substance_index.get(
             "rmlId"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "rmlId",
@@ -407,7 +402,8 @@ def normalise_substance(
         substance_index.get(
             "rmlName"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "rmlName",
@@ -423,10 +419,12 @@ def normalise_substance(
         substance_index.get(
             "rmlCas"
         )
-        or substance_index.get(
+        or
+        substance_index.get(
             "casNumber"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "rmlCas",
@@ -440,13 +438,16 @@ def normalise_substance(
         substance_index.get(
             "ecNumber"
         )
-        or substance_index.get(
+        or
+        substance_index.get(
             "rmlEc"
         )
-        or substance_index.get(
+        or
+        substance_index.get(
             "rmlEcNumber"
         )
-        or find_first_field(
+        or
+        find_first_field(
             item,
             {
                 "ecNumber",
@@ -457,21 +458,31 @@ def normalise_substance(
         )
     )
 
-    clean_rml_id = clean_text(
-        rml_id
+    clean_rml_id = (
+        clean_text(
+            rml_id
+        )
     )
 
     return {
-        "Name": clean_text(
-            substance_name
+        "Name": (
+            clean_text(
+                substance_name
+            )
         ),
-        "EC Number": clean_identifier(
-            ec_number
+        "EC Number": (
+            clean_identifier(
+                ec_number
+            )
         ),
-        "CAS Number": clean_identifier(
-            cas_number
+        "CAS Number": (
+            clean_identifier(
+                cas_number
+            )
         ),
-        "rmlId": clean_rml_id,
+        "rmlId": (
+            clean_rml_id
+        ),
         "URL": (
             f"{ECHA_BASE_URL}/"
             f"{clean_rml_id}/overview"
@@ -486,29 +497,44 @@ def substance_result_score(
     result,
     search_text,
 ):
-    query = clean_text(
-        search_text
-    ).lower()
+    query = (
+        clean_text(
+            search_text
+        )
+        .lower()
+    )
 
-    name = result.get(
-        "Name",
-        "",
-    ).lower()
+    name = (
+        result.get(
+            "Name",
+            "",
+        )
+        .lower()
+    )
 
-    cas_number = result.get(
-        "CAS Number",
-        "",
-    ).lower()
+    cas_number = (
+        result.get(
+            "CAS Number",
+            "",
+        )
+        .lower()
+    )
 
-    ec_number = result.get(
-        "EC Number",
-        "",
-    ).lower()
+    ec_number = (
+        result.get(
+            "EC Number",
+            "",
+        )
+        .lower()
+    )
 
-    rml_id = result.get(
-        "rmlId",
-        "",
-    ).lower()
+    rml_id = (
+        result.get(
+            "rmlId",
+            "",
+        )
+        .lower()
+    )
 
     if query and query == cas_number:
         return 100
@@ -541,12 +567,16 @@ def substance_result_score(
 def search_echa_api(
     search_text,
 ):
-    session = create_echa_session()
+    session = (
+        create_echa_session()
+    )
 
     params = {
         "pageIndex": 1,
         "pageSize": 100,
-        "searchText": search_text,
+        "searchText": (
+            search_text
+        ),
     }
 
     result = echa_get(
@@ -581,9 +611,11 @@ def search_echa_api(
         reverse=True,
     )
 
-    response = result[
-        "response"
-    ]
+    response = (
+        result[
+            "response"
+        ]
+    )
 
     return {
         "response_status": (
@@ -609,18 +641,28 @@ def search_echa_api(
             if response is not None
             else ""
         ),
-        "json": result[
-            "json"
-        ],
-        "error": result[
-            "error"
-        ],
-        "params": params,
-        "results": substances,
-        "state": extract_state(
+        "json": (
             result[
                 "json"
             ]
+        ),
+        "error": (
+            result[
+                "error"
+            ]
+        ),
+        "params": (
+            params
+        ),
+        "results": (
+            substances
+        ),
+        "state": (
+            extract_state(
+                result[
+                    "json"
+                ]
+            )
         ),
     }
 
@@ -636,8 +678,10 @@ def normalise_registrant(
         dict,
     ):
         return {
-            "Registrant": clean_text(
-                item
+            "Registrant": (
+                clean_text(
+                    item
+                )
             ),
             "Address": "",
             "Status": "",
@@ -645,24 +689,32 @@ def normalise_registrant(
         }
 
     return {
-        "Registrant": clean_text(
-            item.get(
-                "name"
+        "Registrant": (
+            clean_text(
+                item.get(
+                    "name"
+                )
             )
         ),
-        "Address": clean_text(
-            item.get(
-                "address"
+        "Address": (
+            clean_text(
+                item.get(
+                    "address"
+                )
             )
         ),
-        "Status": clean_text(
-            item.get(
-                "registrationStatus"
+        "Status": (
+            clean_text(
+                item.get(
+                    "registrationStatus"
+                )
             )
         ),
-        "Details": clean_text(
-            item.get(
-                "details"
+        "Details": (
+            clean_text(
+                item.get(
+                    "details"
+                )
             )
         ),
     }
@@ -675,9 +727,15 @@ def get_registrant_page(
     page_size,
 ):
     params = {
-        "pageIndex": page_index,
-        "pageSize": page_size,
-        "rmlId": rml_id,
+        "pageIndex": (
+            page_index
+        ),
+        "pageSize": (
+            page_size
+        ),
+        "rmlId": (
+            rml_id
+        ),
     }
 
     result = echa_get(
@@ -690,9 +748,11 @@ def get_registrant_page(
         ),
     )
 
-    response = result[
-        "response"
-    ]
+    response = (
+        result[
+            "response"
+        ]
+    )
 
     return {
         "status": (
@@ -718,22 +778,32 @@ def get_registrant_page(
             if response is not None
             else ""
         ),
-        "json": result[
-            "json"
-        ],
-        "error": result[
-            "error"
-        ],
-        "params": params,
-        "items": extract_items(
+        "json": (
             result[
                 "json"
             ]
         ),
-        "state": extract_state(
+        "error": (
             result[
-                "json"
+                "error"
             ]
+        ),
+        "params": (
+            params
+        ),
+        "items": (
+            extract_items(
+                result[
+                    "json"
+                ]
+            )
+        ),
+        "state": (
+            extract_state(
+                result[
+                    "json"
+                ]
+            )
         ),
     }
 
@@ -745,52 +815,72 @@ def get_registrant_page(
 def get_echa_registrants(
     rml_id,
 ):
-    session = create_echa_session()
+    session = (
+        create_echa_session()
+    )
 
     page_size = 100
 
-    first_page = get_registrant_page(
-        session=session,
-        rml_id=rml_id,
-        page_index=1,
-        page_size=page_size,
+    first_page = (
+        get_registrant_page(
+            session=session,
+            rml_id=rml_id,
+            page_index=1,
+            page_size=page_size,
+        )
     )
 
     if (
         first_page[
             "error"
         ]
-        or first_page[
+        or
+        first_page[
             "status"
         ]
         != 200
-        or first_page[
+        or
+        first_page[
             "json"
         ]
         is None
     ):
         return {
-            "status": first_page[
-                "status"
-            ],
-            "url": first_page[
-                "url"
-            ],
-            "content_type": first_page[
-                "content_type"
-            ],
-            "text": first_page[
-                "text"
-            ],
-            "json": first_page[
-                "json"
-            ],
-            "error": first_page[
-                "error"
-            ],
-            "state": first_page[
-                "state"
-            ],
+            "status": (
+                first_page[
+                    "status"
+                ]
+            ),
+            "url": (
+                first_page[
+                    "url"
+                ]
+            ),
+            "content_type": (
+                first_page[
+                    "content_type"
+                ]
+            ),
+            "text": (
+                first_page[
+                    "text"
+                ]
+            ),
+            "json": (
+                first_page[
+                    "json"
+                ]
+            ),
+            "error": (
+                first_page[
+                    "error"
+                ]
+            ),
+            "state": (
+                first_page[
+                    "state"
+                ]
+            ),
             "registrants": [],
             "pages_loaded": 1,
         }
@@ -801,9 +891,11 @@ def get_echa_registrants(
         ]
     )
 
-    state = first_page[
-        "state"
-    ]
+    state = (
+        first_page[
+            "state"
+        ]
+    )
 
     try:
         total_pages = int(
@@ -825,22 +917,26 @@ def get_echa_registrants(
         2,
         total_pages + 1,
     ):
-        page = get_registrant_page(
-            session=session,
-            rml_id=rml_id,
-            page_index=page_index,
-            page_size=page_size,
+        page = (
+            get_registrant_page(
+                session=session,
+                rml_id=rml_id,
+                page_index=page_index,
+                page_size=page_size,
+            )
         )
 
         if (
             page[
                 "error"
             ]
-            or page[
+            or
+            page[
                 "status"
             ]
             != 200
-            or page[
+            or
+            page[
                 "json"
             ]
             is None
@@ -863,25 +959,41 @@ def get_echa_registrants(
     ]
 
     return {
-        "status": first_page[
-            "status"
-        ],
-        "url": first_page[
-            "url"
-        ],
-        "content_type": first_page[
-            "content_type"
-        ],
-        "text": first_page[
-            "text"
-        ],
-        "json": first_page[
-            "json"
-        ],
+        "status": (
+            first_page[
+                "status"
+            ]
+        ),
+        "url": (
+            first_page[
+                "url"
+            ]
+        ),
+        "content_type": (
+            first_page[
+                "content_type"
+            ]
+        ),
+        "text": (
+            first_page[
+                "text"
+            ]
+        ),
+        "json": (
+            first_page[
+                "json"
+            ]
+        ),
         "error": None,
-        "state": state,
-        "registrants": registrants,
-        "pages_loaded": pages_loaded,
+        "state": (
+            state
+        ),
+        "registrants": (
+            registrants
+        ),
+        "pages_loaded": (
+            pages_loaded
+        ),
     }
 
 
@@ -911,7 +1023,9 @@ DEFAULT_STATE = {
     "registrant_rml_id": "",
 }
 
-for key, default_value in DEFAULT_STATE.items():
+for key, default_value in (
+    DEFAULT_STATE.items()
+):
     if key not in st.session_state:
         st.session_state[
             key
@@ -945,8 +1059,10 @@ purchase_df = None
 sales_df = None
 
 try:
-    purchase_df = load_purchase_history(
-        PURCHASE_HISTORY_FILE
+    purchase_df = (
+        load_purchase_history(
+            PURCHASE_HISTORY_FILE
+        )
     )
 
 except Exception as error:
@@ -956,8 +1072,10 @@ except Exception as error:
     )
 
 try:
-    sales_df = load_sales_history(
-        SALES_HISTORY_FILE
+    sales_df = (
+        load_sales_history(
+            SALES_HISTORY_FILE
+        )
     )
 
 except Exception as error:
@@ -970,22 +1088,26 @@ except Exception as error:
 # --------------------------------------------------
 # SEARCH INPUTS
 # --------------------------------------------------
-search_query = st.text_input(
-    (
-        "CAS number, EC number, "
-        "substance name, or rmlId"
-    ),
-    placeholder=(
-        "For example: 128-37-0"
-    ),
+search_query = (
+    st.text_input(
+        (
+            "CAS number, EC number, "
+            "substance name, or rmlId"
+        ),
+        placeholder=(
+            "For example: 128-37-0"
+        ),
+    )
 )
 
-country = st.selectbox(
-    "Country of Origin",
-    options=list(
-        COUNTRY_CODES.keys()
-    ),
-    index=0,
+country = (
+    st.selectbox(
+        "Country of Origin",
+        options=list(
+            COUNTRY_CODES.keys()
+        ),
+        index=0,
+    )
 )
 
 
@@ -996,7 +1118,9 @@ if st.button(
     "Search ECHA",
     type="primary",
 ):
-    clean_query = search_query.strip()
+    clean_query = (
+        search_query.strip()
+    )
 
     if not clean_query:
         st.error(
@@ -1004,26 +1128,31 @@ if st.button(
             "EC number, substance name, "
             "or rmlId."
         )
+
         st.stop()
 
     if (
         looks_like_cas(
             clean_query
         )
-        and not validate_cas(
+        and
+        not validate_cas(
             clean_query
         )
     ):
         st.error(
             "Invalid CAS number."
         )
+
         st.stop()
 
     with st.spinner(
         "Searching ECHA..."
     ):
-        search_result = search_echa_api(
-            clean_query
+        search_result = (
+            search_echa_api(
+                clean_query
+            )
         )
 
     st.session_state[
@@ -1096,16 +1225,20 @@ if st.button(
 # --------------------------------------------------
 # SEARCH DEBUG INFORMATION
 # --------------------------------------------------
-search_debug = st.session_state[
-    "echa_search_debug"
-]
+search_debug = (
+    st.session_state[
+        "echa_search_debug"
+    ]
+)
 
 if search_debug is not None:
     with st.expander(
         "ECHA substance search details",
         expanded=False,
     ):
-        debug_columns = st.columns(3)
+        debug_columns = (
+            st.columns(3)
+        )
 
         debug_columns[0].metric(
             "HTTP",
@@ -1170,7 +1303,8 @@ if search_debug is not None:
                 search_debug[
                     "response_url"
                 ]
-                or "No response URL"
+                or
+                "No response URL"
             ),
             language=None,
         )
@@ -1186,29 +1320,41 @@ if search_debug is not None:
 # --------------------------------------------------
 selected_row = None
 
-search_results = st.session_state[
-    "search_results"
-]
+search_results = (
+    st.session_state[
+        "search_results"
+    ]
+)
 
 if search_results:
-    display_dataframe = pd.DataFrame(
-        [
-            {
-                "Name": result[
-                    "Name"
-                ],
-                "EC Number": result[
-                    "EC Number"
-                ],
-                "CAS Number": result[
-                    "CAS Number"
-                ],
-                "rmlId": result[
-                    "rmlId"
-                ],
-            }
-            for result in search_results
-        ]
+    display_dataframe = (
+        pd.DataFrame(
+            [
+                {
+                    "Name": (
+                        result[
+                            "Name"
+                        ]
+                    ),
+                    "EC Number": (
+                        result[
+                            "EC Number"
+                        ]
+                    ),
+                    "CAS Number": (
+                        result[
+                            "CAS Number"
+                        ]
+                    ),
+                    "rmlId": (
+                        result[
+                            "rmlId"
+                        ]
+                    ),
+                }
+                for result in search_results
+            ]
+        )
     )
 
     st.subheader(
@@ -1221,9 +1367,12 @@ if search_results:
         hide_index=True,
     )
 
-    if len(
-        search_results
-    ) == 1:
+    if (
+        len(
+            search_results
+        )
+        == 1
+    ):
         selected_index = 0
 
         st.info(
@@ -1251,29 +1400,37 @@ if search_results:
             ) - 1,
         )
 
-        selected_label = st.selectbox(
-            "Select substance",
-            options=result_labels,
-            index=safe_index,
+        selected_label = (
+            st.selectbox(
+                "Select substance",
+                options=result_labels,
+                index=safe_index,
+            )
         )
 
-        selected_index = result_labels.index(
-            selected_label
+        selected_index = (
+            result_labels.index(
+                selected_label
+            )
         )
 
         st.session_state[
             "selected_result_index"
         ] = selected_index
 
-    selected_row = search_results[
-        selected_index
-    ]
+    selected_row = (
+        search_results[
+            selected_index
+        ]
+    )
 
     st.subheader(
         "Selected Substance"
     )
 
-    selected_columns = st.columns(4)
+    selected_columns = (
+        st.columns(4)
+    )
 
     selected_columns[0].metric(
         "Name",
@@ -1328,9 +1485,11 @@ if search_results:
 # AUTOMATIC REGISTRANTS API LOOKUP
 # --------------------------------------------------
 if selected_row is not None:
-    selected_rml_id = selected_row.get(
-        "rmlId",
-        "",
+    selected_rml_id = (
+        selected_row.get(
+            "rmlId",
+            "",
+        )
     )
 
     if not selected_rml_id:
@@ -1351,17 +1510,21 @@ if selected_row is not None:
             ):
                 st.session_state[
                     "registrant_result"
-                ] = get_echa_registrants(
-                    selected_rml_id
+                ] = (
+                    get_echa_registrants(
+                        selected_rml_id
+                    )
                 )
 
             st.session_state[
                 "registrant_rml_id"
             ] = selected_rml_id
 
-        registrant_result = st.session_state[
-            "registrant_result"
-        ]
+        registrant_result = (
+            st.session_state[
+                "registrant_result"
+            ]
+        )
 
         st.subheader(
             "REACH Registrants"
@@ -1411,15 +1574,21 @@ if selected_row is not None:
                 )
 
         else:
-            registrants = registrant_result[
-                "registrants"
-            ]
+            registrants = (
+                registrant_result[
+                    "registrants"
+                ]
+            )
 
-            registrant_state = registrant_result[
-                "state"
-            ]
+            registrant_state = (
+                registrant_result[
+                    "state"
+                ]
+            )
 
-            registrant_columns = st.columns(4)
+            registrant_columns = (
+                st.columns(4)
+            )
 
             registrant_columns[0].metric(
                 "HTTP",
@@ -1464,8 +1633,10 @@ if selected_row is not None:
             )
 
             if registrants:
-                registrants_dataframe = pd.DataFrame(
-                    registrants
+                registrants_dataframe = (
+                    pd.DataFrame(
+                        registrants
+                    )
                 )
 
                 status_options = sorted(
@@ -1483,18 +1654,22 @@ if selected_row is not None:
                     ).strip()
                 )
 
-                selected_statuses = st.multiselect(
-                    "Filter by registration status",
-                    options=status_options,
-                    default=status_options,
+                selected_statuses = (
+                    st.multiselect(
+                        "Filter by registration status",
+                        options=status_options,
+                        default=status_options,
+                    )
                 )
 
-                show_confidential = st.checkbox(
-                    (
-                        "Show confidential or "
-                        "non-publishable registrants"
-                    ),
-                    value=True,
+                show_confidential = (
+                    st.checkbox(
+                        (
+                            "Show confidential or "
+                            "non-publishable registrants"
+                        ),
+                        value=True,
+                    )
                 )
 
                 filtered_registrants = (
@@ -1585,14 +1760,18 @@ if selected_row is not None:
 ecics_result = None
 
 if selected_row is not None:
-    selected_ec_number = selected_row.get(
-        "EC Number",
-        "",
+    selected_ec_number = (
+        selected_row.get(
+            "EC Number",
+            "",
+        )
     )
 
-    selected_cas_number = selected_row.get(
-        "CAS Number",
-        "",
+    selected_cas_number = (
+        selected_row.get(
+            "CAS Number",
+            "",
+        )
     )
 
     if selected_ec_number:
@@ -1600,8 +1779,10 @@ if selected_row is not None:
             "Searching ECICS..."
         ):
             try:
-                ecics_result = get_cached_goods_code(
-                    selected_ec_number
+                ecics_result = (
+                    get_cached_goods_code(
+                        selected_ec_number
+                    )
                 )
 
             except Exception as error:
@@ -1620,9 +1801,12 @@ if selected_row is not None:
                 "ECICS Information"
             )
 
-            ecics_columns = st.columns(2)
+            ecics_columns = (
+                st.columns(2)
+            )
 
-            with ecics_columnsst.write(
+            with ecics_columns[0]:
+                st.write(
                     "Goods Code: "
                     f"{ecics_result.get('goods_code', '-')}"
                 )
@@ -1632,7 +1816,8 @@ if selected_row is not None:
                     f"{ecics_result.get('cus_number', '-')}"
                 )
 
-            with ecics_columnsst.write(
+            with ecics_columns[1]:
+                st.write(
                     "CAS Number: "
                     f"{ecics_result.get('cas_number', '-')}"
                 )
@@ -1658,12 +1843,15 @@ if selected_row is not None:
 
     if (
         ecics_result
-        and ecics_result.get(
+        and
+        ecics_result.get(
             "success"
         )
     ):
-        goods_code = ecics_result.get(
-            "goods_code"
+        goods_code = (
+            ecics_result.get(
+                "goods_code"
+            )
         )
 
         if goods_code:
@@ -1671,10 +1859,12 @@ if selected_row is not None:
                 "Building TARIC URL..."
             ):
                 try:
-                    taric_result = get_taric(
-                        goods_code,
-                        country,
-                        selected_cas_number,
+                    taric_result = (
+                        get_taric(
+                            goods_code,
+                            country,
+                            selected_cas_number,
+                        )
                     )
 
                 except Exception as error:
@@ -1747,9 +1937,11 @@ if selected_row is not None:
                         "TARIC debug links",
                         expanded=False,
                     ):
-                        for link in taric_result[
-                            "debug_links"
-                        ]:
+                        for link in (
+                            taric_result[
+                                "debug_links"
+                            ]
+                        ):
                             st.write(
                                 link
                             )
@@ -1760,18 +1952,23 @@ if selected_row is not None:
 # --------------------------------------------------
 if (
     selected_row is not None
-    and purchase_df is not None
+    and
+    purchase_df is not None
 ):
-    selected_cas = selected_row.get(
-        "CAS Number",
-        "",
+    selected_cas = (
+        selected_row.get(
+            "CAS Number",
+            "",
+        )
     )
 
     if selected_cas:
         try:
-            purchase_info = get_purchase_information(
-                purchase_df,
-                selected_cas,
+            purchase_info = (
+                get_purchase_information(
+                    purchase_df,
+                    selected_cas,
+                )
             )
 
         except Exception as error:
@@ -1795,9 +1992,11 @@ if (
                     "been purchased."
                 )
 
-                latest_suppliers = purchase_info.get(
-                    "last_suppliers",
-                    [],
+                latest_suppliers = (
+                    purchase_info.get(
+                        "last_suppliers",
+                        [],
+                    )
                 )
 
                 supplier_text = (
@@ -1805,16 +2004,51 @@ if (
                         latest_suppliers
                     )
                     if latest_suppliers
-                    else "Supplier not available"
-                )
-
-                last_purchase_date = purchase_info.get(
-                    "last_purchase_date"
+                    else
+                    "Supplier not available"
                 )
 
                 purchase_columns = st.columns(2)
 
-                with purchase_columnsst.write(
+                with purchase_columns[0]:
+                    last_purchase_date = purchase_info.get(
+                        "last_purchase_date"
+                    )
+
+                    st.write(
+                        "**Last purchase date:**",
+                        (
+                            last_purchase_date.strftime("%d/%m/%Y")
+                            if pd.notna(last_purchase_date)
+                            else "-"
+                        ),
+                    )
+
+                    st.write(
+                        "**Supplier on last purchase:**",
+                        supplier_text,
+                    )
+
+                with purchase_columns[1]:
+                    st.write(
+                        "**Purchase lines found:**",
+                        purchase_info.get(
+                            "purchase_line_count",
+                            0,
+                        ),
+                    )
+
+                    st.write(
+                        "**Suppliers used:**",
+                        len(
+                            purchase_info.get(
+                                "all_suppliers",
+                                [],
+                            )
+                        ),
+                    )
+
+                    st.write(
                         "**Last purchase date:**",
                         (
                             last_purchase_date.strftime(
@@ -1832,7 +2066,8 @@ if (
                         supplier_text,
                     )
 
-                with purchase_columnsst.write(
+                with purchase_columns[1]:
+                    st.write(
                         "**Purchase lines found:**",
                         purchase_info.get(
                             "purchase_line_count",
@@ -1857,27 +2092,23 @@ if (
                     .copy()
                 )
 
-                if (
-                    "purchase_price"
-                    in latest_purchases.columns
-                    and "currency"
-                    in latest_purchases.columns
-                ):
+                latest_purchases[
+                    "unit_price"
+                ] = (
                     latest_purchases[
-                        "unit_price"
-                    ] = (
-                        latest_purchases[
-                            "purchase_price"
-                        ]
-                        .fillna("")
-                        .astype(str)
-                        + " "
-                        + latest_purchases[
-                            "currency"
-                        ]
-                        .fillna("")
-                        .astype(str)
-                    ).str.strip()
+                        "purchase_price"
+                    ]
+                    .fillna("")
+                    .astype(str)
+                    +
+                    " "
+                    +
+                    latest_purchases[
+                        "currency"
+                    ]
+                    .fillna("")
+                    .astype(str)
+                ).str.strip()
 
                 latest_columns = [
                     "supplier_name",
@@ -1897,34 +2128,27 @@ if (
                     "**Most recent purchase:**"
                 )
 
-                if latest_columns:
-                    st.dataframe(
-                        latest_purchases[
-                            latest_columns
-                        ],
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "supplier_name": (
-                                "Supplier"
-                            ),
-                            "product_description": (
-                                "Purchased product"
-                            ),
-                            "article_reference": (
-                                "Article reference"
-                            ),
-                            "unit_price": (
-                                "Unit purchase price"
-                            ),
-                        },
-                    )
-
-                else:
-                    st.info(
-                        "No displayable purchase "
-                        "columns were found."
-                    )
+                st.dataframe(
+                    latest_purchases[
+                        latest_columns
+                    ],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "supplier_name": (
+                            "Supplier"
+                        ),
+                        "product_description": (
+                            "Purchased product"
+                        ),
+                        "article_reference": (
+                            "Article reference"
+                        ),
+                        "unit_price": (
+                            "Unit purchase price"
+                        ),
+                    },
+                )
 
                 with st.expander(
                     "View complete purchase history"
@@ -1953,40 +2177,39 @@ if (
                         in history.columns
                     ]
 
-                    if history_columns:
-                        st.dataframe(
-                            history[
-                                history_columns
-                            ],
-                            hide_index=True,
-                            use_container_width=True,
-                            column_config={
-                                "purchase_date": (
-                                    st.column_config.DateColumn(
-                                        "Purchase date",
-                                        format="DD/MM/YYYY",
-                                    )
-                                ),
-                                "supplier_name": (
-                                    "Supplier"
-                                ),
-                                "product_description": (
-                                    "Purchased product"
-                                ),
-                                "article_reference": (
-                                    "Article reference"
-                                ),
-                                "document_number": (
-                                    "Document number"
-                                ),
-                                "purchase_price": (
-                                    "Unit purchase price"
-                                ),
-                                "currency": (
-                                    "Currency"
-                                ),
-                            },
-                        )
+                    st.dataframe(
+                        history[
+                            history_columns
+                        ],
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "purchase_date": (
+                                st.column_config.DateColumn(
+                                    "Purchase date",
+                                    format="DD/MM/YYYY",
+                                )
+                            ),
+                            "supplier_name": (
+                                "Supplier"
+                            ),
+                            "product_description": (
+                                "Purchased product"
+                            ),
+                            "article_reference": (
+                                "Article reference"
+                            ),
+                            "document_number": (
+                                "Document number"
+                            ),
+                            "purchase_price": (
+                                "Unit purchase price"
+                            ),
+                            "currency": (
+                                "Currency"
+                            ),
+                        },
+                    )
 
             else:
                 st.info(
@@ -2008,11 +2231,14 @@ if (
 # --------------------------------------------------
 if (
     selected_row is not None
-    and sales_df is not None
+    and
+    sales_df is not None
 ):
-    selected_cas = selected_row.get(
-        "CAS Number",
-        "",
+    selected_cas = (
+        selected_row.get(
+            "CAS Number",
+            "",
+        )
     )
 
     if selected_cas:
@@ -2021,9 +2247,11 @@ if (
         )
 
         try:
-            customers = get_customers_for_cas(
-                sales_df,
-                selected_cas,
+            customers = (
+                get_customers_for_cas(
+                    sales_df,
+                    selected_cas,
+                )
             )
 
         except Exception as error:
@@ -2043,24 +2271,28 @@ if (
             or []
         )
 
-        selected_customer = st.selectbox(
-            "Customer",
-            customer_options,
-            key=(
-                "sales_customer_selector"
-            ),
+        selected_customer = (
+            st.selectbox(
+                "Customer",
+                customer_options,
+                key=(
+                    "sales_customer_selector"
+                ),
+            )
         )
 
         try:
-            sales_info = get_sales_information(
-                sales_df,
-                selected_cas,
-                (
-                    None
-                    if selected_customer
-                    == "All customers"
-                    else selected_customer
-                ),
+            sales_info = (
+                get_sales_information(
+                    sales_df,
+                    selected_cas,
+                    (
+                        None
+                        if selected_customer
+                        == "All customers"
+                        else selected_customer
+                    ),
+                )
             )
 
         except Exception as error:
@@ -2082,138 +2314,169 @@ if (
                     .copy()
                 )
 
-                if history.empty:
-                    st.info(
-                        "No sales records found."
-                    )
+                latest_sale = (
+                    history.iloc[0]
+                )
 
-                else:
-                    latest_sale = history.iloc[0]
+                st.success(
+                    f"{sales_info.get('sales_line_count', len(history))} "
+                    "sales records found."
+                )
 
-                    st.success(
-                        f"{sales_info.get('sales_line_count', len(history))} "
-                        "sales records found."
-                    )
+                st.write(
+                    "### Last Sale"
+                )
 
-                    st.write(
-                        "### Last Sale"
-                    )
+                sales_columns = st.columns(2)
 
+                with sales_columns[0]:
                     sales_date = latest_sale.get(
                         "sales_date"
                     )
 
-                    sales_columns = st.columns(2)
-
-                    with sales_columnsst.write(
-                            "**Date:**",
-                            (
-                                sales_date.strftime(
-                                    "%d/%m/%Y"
-                                )
-                                if pd.notna(
-                                    sales_date
-                                )
-                                else "-"
-                            ),
-                        )
-
-                        st.write(
-                            "**Sales Order:**",
-                            latest_sale.get(
-                                "sales_order",
-                                "-",
-                            ),
-                        )
-
-                    with sales_columnsst.write(
-                            "**Unit Price:**",
-                            latest_sale.get(
-                                "sales_price",
-                                "-",
-                            ),
-                        )
-
-                        st.write(
-                            "**Quantity:**",
-                            latest_sale.get(
-                                "sales_quantity",
-                                "-",
-                            ),
-                        )
-
                     st.write(
-                        "### Sales History"
+                        "**Date:**",
+                        (
+                            sales_date.strftime("%d/%m/%Y")
+                            if pd.notna(sales_date)
+                            else "-"
+                        ),
                     )
 
-                    history_columns = [
-                        "sales_date",
-                        "customer_name",
-                        "product_description",
-                        "sales_order",
-                        "sales_quantity",
-                        "sales_price",
-                        "currency",
-                        "sales_value",
-                        "document_number",
-                    ]
+                    st.write(
+                        "**Sales Order:**",
+                        latest_sale.get(
+                            "sales_order",
+                            "-",
+                        ),
+                    )
 
-                    history_columns = [
-                        column
-                        for column in history_columns
-                        if column
-                        in history.columns
-                    ]
+                with sales_columns[1]:
+                    st.write(
+                        "**Unit Price:**",
+                        latest_sale.get(
+                            "sales_price",
+                            "-",
+                        ),
+                    )
 
-                    if history_columns:
-                        st.dataframe(
-                            history[
-                                history_columns
-                            ],
-                            hide_index=True,
-                            use_container_width=True,
-                            column_config={
-                                "sales_date": (
-                                    st.column_config.DateColumn(
-                                        "Date",
-                                        format="DD/MM/YYYY",
-                                    )
-                                ),
-                                "customer_name": (
-                                    "Customer"
-                                ),
-                                "product_description": (
-                                    "Product"
-                                ),
-                                "sales_order": (
-                                    "Sales Order"
-                                ),
-                                "sales_quantity": (
-                                    st.column_config.NumberColumn(
-                                        "Quantity",
-                                        format="%.2f",
-                                    )
-                                ),
-                                "sales_price": (
-                                    st.column_config.NumberColumn(
-                                        "Unit Price",
-                                        format="%.2f",
-                                    )
-                                ),
-                                "sales_value": (
-                                    st.column_config.NumberColumn(
-                                        "Sales Value",
-                                        format="%.2f",
-                                    )
-                                ),
-                                "currency": (
-                                    "Currency"
-                                ),
-                                "document_number": (
-                                    "Document Number"
-                                ),
-                            },
-                        )
+                    st.write(
+                        "**Quantity:**",
+                        latest_sale.get(
+                            "sales_quantity",
+                            "-",
+                        ),
+                    )
+
+                    st.write(
+                        "**Date:**",
+                        (
+                            sales_date.strftime(
+                                "%d/%m/%Y"
+                            )
+                            if pd.notna(
+                                sales_date
+                            )
+                            else "-"
+                        ),
+                    )
+
+                    st.write(
+                        "**Sales Order:**",
+                        latest_sale.get(
+                            "sales_order",
+                            "-",
+                        ),
+                    )
+
+                with sales_columns[1]:
+                    st.write(
+                        "**Unit Price:**",
+                        latest_sale.get(
+                            "sales_price",
+                            "-",
+                        ),
+                    )
+
+                    st.write(
+                        "**Quantity:**",
+                        latest_sale.get(
+                            "sales_quantity",
+                            "-",
+                        ),
+                    )
+
+                st.write(
+                    "### Sales History"
+                )
+
+                history_columns = [
+                    "sales_date",
+                    "customer_name",
+                    "product_description",
+                    "sales_order",
+                    "sales_quantity",
+                    "sales_price",
+                    "currency",
+                    "sales_value",
+                    "document_number",
+                ]
+
+                history_columns = [
+                    column
+                    for column in history_columns
+                    if column
+                    in history.columns
+                ]
+
+                st.dataframe(
+                    history[
+                        history_columns
+                    ],
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "sales_date": (
+                            st.column_config.DateColumn(
+                                "Date",
+                                format="DD/MM/YYYY",
+                            )
+                        ),
+                        "customer_name": (
+                            "Customer"
+                        ),
+                        "product_description": (
+                            "Product"
+                        ),
+                        "sales_order": (
+                            "Sales Order"
+                        ),
+                        "sales_quantity": (
+                            st.column_config.NumberColumn(
+                                "Quantity",
+                                format="%.2f",
+                            )
+                        ),
+                        "sales_price": (
+                            st.column_config.NumberColumn(
+                                "Unit Price",
+                                format="%.2f",
+                            )
+                        ),
+                        "sales_value": (
+                            st.column_config.NumberColumn(
+                                "Sales Value",
+                                format="%.2f",
+                            )
+                        ),
+                        "currency": (
+                            "Currency"
+                        ),
+                        "document_number": (
+                            "Document Number"
+                        ),
+                    },
+                )
 
             else:
                 st.info(
@@ -2237,7 +2500,9 @@ if st.button(
 ):
     st.cache_data.clear()
 
-    for key, default_value in DEFAULT_STATE.items():
+    for key, default_value in (
+        DEFAULT_STATE.items()
+    ):
         st.session_state[
             key
         ] = default_value
