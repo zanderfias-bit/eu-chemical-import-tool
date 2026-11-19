@@ -1202,8 +1202,9 @@ if st.button(
         != 200
     ):
         st.error(
-            "The ECHA substance search "
-            "could not be completed."
+            "ECHA returned HTTP "
+            f"{search_result['response_status']} "
+            "for the substance search."
         )
 
     elif search_result[
@@ -1218,6 +1219,99 @@ if st.button(
         st.warning(
             "ECHA was reached, but no "
             "matching result was found."
+        )
+
+
+# --------------------------------------------------
+# SEARCH DEBUG INFORMATION
+# --------------------------------------------------
+search_debug = (
+    st.session_state[
+        "echa_search_debug"
+    ]
+)
+
+if search_debug is not None:
+    with st.expander(
+        "ECHA substance search details",
+        expanded=False,
+    ):
+        debug_columns = (
+            st.columns(3)
+        )
+
+        debug_columns[0].metric(
+            "HTTP",
+            (
+                search_debug[
+                    "response_status"
+                ]
+                if search_debug[
+                    "response_status"
+                ]
+                is not None
+                else "Error"
+            ),
+        )
+
+        debug_columns[1].metric(
+            "Valid JSON",
+            (
+                "Yes"
+                if search_debug[
+                    "json"
+                ]
+                is not None
+                else "No"
+            ),
+        )
+
+        debug_columns[2].metric(
+            "Results",
+            len(
+                search_debug[
+                    "results"
+                ]
+            ),
+        )
+
+        st.write(
+            "**Endpoint:**"
+        )
+
+        st.code(
+            SUBSTANCE_SEARCH_API_URL,
+            language=None,
+        )
+
+        st.write(
+            "**Parameters:**"
+        )
+
+        st.json(
+            search_debug[
+                "params"
+            ]
+        )
+
+        st.write(
+            "**Final URL:**"
+        )
+
+        st.code(
+            (
+                search_debug[
+                    "response_url"
+                ]
+                or
+                "No response URL"
+            ),
+            language=None,
+        )
+
+        st.write(
+            "**Content-Type:** "
+            f"{search_debug['response_content_type']}"
         )
 
 
@@ -1438,7 +1532,7 @@ if selected_row is not None:
 
         if registrant_result is None:
             st.warning(
-                "No registrant information "
+                "No registrant result "
                 "is available."
             )
 
@@ -1450,6 +1544,12 @@ if selected_row is not None:
                 "could not be completed."
             )
 
+            st.info(
+                registrant_result[
+                    "error"
+                ]
+            )
+
         elif (
             registrant_result[
                 "status"
@@ -1457,15 +1557,79 @@ if selected_row is not None:
             != 200
         ):
             st.error(
-                "The ECHA registrant information "
-                "could not be retrieved."
+                "ECHA returned HTTP "
+                f"{registrant_result['status']} "
+                "for the registrants request."
             )
+
+            with st.expander(
+                "Raw registrants response",
+                expanded=False,
+            ):
+                st.code(
+                    registrant_result[
+                        "text"
+                    ][:30000],
+                    language=None,
+                )
 
         else:
             registrants = (
                 registrant_result[
                     "registrants"
                 ]
+            )
+
+            registrant_state = (
+                registrant_result[
+                    "state"
+                ]
+            )
+
+            registrant_columns = (
+                st.columns(4)
+            )
+
+            registrant_columns[0].metric(
+                "HTTP",
+                registrant_result[
+                    "status"
+                ],
+            )
+
+            registrant_columns[1].metric(
+                "Total reported",
+                registrant_state.get(
+                    "totalItems",
+                    len(
+                        registrants
+                    ),
+                ),
+            )
+
+            registrant_columns[2].metric(
+                "Rows loaded",
+                len(
+                    registrants
+                ),
+            )
+
+            registrant_columns[3].metric(
+                "Pages loaded",
+                registrant_result[
+                    "pages_loaded"
+                ],
+            )
+
+            st.write(
+                "**Final API URL:**"
+            )
+
+            st.code(
+                registrant_result[
+                    "url"
+                ],
+                language=None,
             )
 
             if registrants:
@@ -1884,6 +2048,43 @@ if (
                         ),
                     )
 
+                    st.write(
+                        "**Last purchase date:**",
+                        (
+                            last_purchase_date.strftime(
+                                "%d/%m/%Y"
+                            )
+                            if pd.notna(
+                                last_purchase_date
+                            )
+                            else "-"
+                        ),
+                    )
+
+                    st.write(
+                        "**Supplier on last purchase:**",
+                        supplier_text,
+                    )
+
+                with purchase_columns[1]:
+                    st.write(
+                        "**Purchase lines found:**",
+                        purchase_info.get(
+                            "purchase_line_count",
+                            0,
+                        ),
+                    )
+
+                    st.write(
+                        "**Suppliers used:**",
+                        len(
+                            purchase_info.get(
+                                "all_suppliers",
+                                [],
+                            )
+                        ),
+                    )
+
                 latest_purchases = (
                     purchase_info[
                         "latest_purchases"
@@ -2126,18 +2327,56 @@ if (
                     "### Last Sale"
                 )
 
-                sales_columns = st.columns(2)
+            sales_columns = st.columns(2)
 
-                with sales_columns[0]:
-                    sales_date = latest_sale.get(
-                        "sales_date"
-                    )
+            with sales_columns[0]:
+                sales_date = latest_sale.get(
+                    "sales_date"
+                )
+
+                st.write(
+                    "**Date:**",
+                    (
+                        sales_date.strftime("%d/%m/%Y")
+                        if pd.notna(sales_date)
+                        else "-"
+                    ),
+                )
+
+                st.write(
+                    "**Sales Order:**",
+                    latest_sale.get(
+                        "sales_order",
+                        "-",
+                    ),
+                )
+
+            with sales_columns[1]:
+                st.write(
+                    "**Unit Price:**",
+                    latest_sale.get(
+                        "sales_price",
+                        "-",
+                    ),
+                )
+
+                st.write(
+                    "**Quantity:**",
+                    latest_sale.get(
+                        "sales_quantity",
+                        "-",
+                    ),
+                )
 
                     st.write(
                         "**Date:**",
                         (
-                            sales_date.strftime("%d/%m/%Y")
-                            if pd.notna(sales_date)
+                            sales_date.strftime(
+                                "%d/%m/%Y"
+                            )
+                            if pd.notna(
+                                sales_date
+                            )
                             else "-"
                         ),
                     )
