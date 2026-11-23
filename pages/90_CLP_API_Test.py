@@ -22,15 +22,14 @@ st.set_page_config(
 st.title("⚠️ ECHA Classification & Labelling Test")
 
 st.write(
-    "This separate test page searches ECHA CHEM, selects a substance "
-    "and requests the available Classification & Labelling overview. "
-    "The raw response is displayed so that the final CLP parser can be "
-    "built from ECHA's actual response structure."
+    "This test page searches ECHA CHEM, retrieves the CLP overview "
+    "and then uses the returned classification ID to request the "
+    "underlying classification details."
 )
 
 st.info(
     "Recommended first test: BHT, CAS 128-37-0. "
-    "The expected ECHA rmlId is 100.004.439."
+    "Expected rmlId: 100.004.439."
 )
 
 
@@ -46,6 +45,11 @@ SUBSTANCE_SEARCH_API_URL = (
 CLP_OVERVIEW_INFO_URL = (
     f"{ECHA_BASE_URL}"
     "/api-cnl-inventory/prominent/overview/info"
+)
+
+CLP_OVERVIEW_CLASSIFICATIONS_URL = (
+    f"{ECHA_BASE_URL}"
+    "/api-cnl-inventory/prominent/overview/classifications"
 )
 
 CONNECT_TIMEOUT_SECONDS = 20
@@ -89,10 +93,6 @@ def clean_text(value: Any) -> str:
 
 
 def clean_identifier(value: Any) -> str:
-    """
-    Format CAS and EC identifiers without
-    JSON list brackets or quotation marks.
-    """
     if value is None:
         return ""
 
@@ -133,18 +133,18 @@ def looks_like_cas(value: str) -> bool:
 
 
 def validate_cas_locally(cas_number: str) -> bool:
-    """
-    Validate a CAS Registry Number using its check digit.
-
-    This is included locally so that the test page does not depend
-    on another project module.
-    """
     if not looks_like_cas(cas_number):
         return False
 
-    digits, check_digit = cas_number.rsplit("-", 1)
+    digits, check_digit = cas_number.rsplit(
+        "-",
+        1,
+    )
 
-    digits = digits.replace("-", "")
+    digits = digits.replace(
+        "-",
+        "",
+    )
 
     total = sum(
         int(digit) * position
@@ -160,7 +160,9 @@ def validate_cas_locally(cas_number: str) -> bool:
 def create_echa_session() -> requests.Session:
     session = requests.Session()
 
-    session.headers.update(ECHA_HEADERS)
+    session.headers.update(
+        ECHA_HEADERS
+    )
 
     retry = Retry(
         total=2,
@@ -200,13 +202,12 @@ def echa_get(
     params: dict | None = None,
     referer: str | None = None,
 ) -> dict:
-    request_headers = (
-        {
+    request_headers = None
+
+    if referer:
+        request_headers = {
             "Referer": referer,
         }
-        if referer
-        else None
-    )
 
     try:
         response = session.get(
@@ -254,7 +255,10 @@ def echa_get(
 
 
 def extract_items(response_json: Any) -> list:
-    if not isinstance(response_json, dict):
+    if not isinstance(
+        response_json,
+        dict,
+    ):
         return []
 
     items = response_json.get(
@@ -262,14 +266,20 @@ def extract_items(response_json: Any) -> list:
         [],
     )
 
-    if not isinstance(items, list):
+    if not isinstance(
+        items,
+        list,
+    ):
         return []
 
     return items
 
 
 def extract_state(response_json: Any) -> dict:
-    if not isinstance(response_json, dict):
+    if not isinstance(
+        response_json,
+        dict,
+    ):
         return {}
 
     state = response_json.get(
@@ -277,7 +287,10 @@ def extract_state(response_json: Any) -> dict:
         {},
     )
 
-    if not isinstance(state, dict):
+    if not isinstance(
+        state,
+        dict,
+    ):
         return {}
 
     return state
@@ -292,7 +305,10 @@ def find_first_field(
         for key in possible_keys
     }
 
-    if isinstance(value, dict):
+    if isinstance(
+        value,
+        dict,
+    ):
         for key, nested_value in value.items():
             if str(key).lower() in wanted_keys:
                 if not isinstance(
@@ -316,7 +332,10 @@ def find_first_field(
             ):
                 return result
 
-    elif isinstance(value, list):
+    elif isinstance(
+        value,
+        list,
+    ):
         for item in value:
             result = find_first_field(
                 item,
@@ -337,12 +356,15 @@ def flatten_json(
     parent_path: str = "",
 ) -> list:
     """
-    Convert nested JSON into a table containing one row
-    for every scalar value.
+    Convert nested JSON into a table containing
+    one row for every scalar value.
     """
     rows = []
 
-    if isinstance(value, dict):
+    if isinstance(
+        value,
+        dict,
+    ):
         if not value:
             rows.append(
                 {
@@ -367,7 +389,10 @@ def flatten_json(
                 )
             )
 
-    elif isinstance(value, list):
+    elif isinstance(
+        value,
+        list,
+    ):
         if not value:
             rows.append(
                 {
@@ -379,7 +404,9 @@ def flatten_json(
             )
 
         for index, item in enumerate(value):
-            path = f"{parent_path}[{index}]"
+            path = (
+                f"{parent_path}[{index}]"
+            )
 
             rows.extend(
                 flatten_json(
@@ -413,11 +440,7 @@ def is_possible_clp_field(path: str) -> bool:
 
     clp_terms = (
         "classification",
-        "classifications",
         "hazard",
-        "hazardclass",
-        "hazardcategory",
-        "hazardstatement",
         "statement",
         "pictogram",
         "signalword",
@@ -449,32 +472,60 @@ def is_possible_clp_field(path: str) -> bool:
     )
 
 
-def is_possible_identifier_field(path: str) -> bool:
-    field_name = (
-        path
-        .replace("]", "")
-        .split(".")[-1]
-        .split("[")[0]
-        .lower()
-    )
+def build_response_result(
+    request_url: str,
+    referer: str,
+    result: dict,
+) -> dict:
+    response = result["response"]
 
-    return (
-        field_name == "id"
-        or field_name.endswith("id")
-        or field_name.endswith("identifier")
-        or field_name in {
-            "uuid",
-            "key",
-            "code",
-        }
-    )
+    return {
+        "request_method": "GET",
+        "request_url": request_url,
+        "referer": referer,
+        "status": (
+            response.status_code
+            if response is not None
+            else None
+        ),
+        "final_url": (
+            response.url
+            if response is not None
+            else ""
+        ),
+        "content_type": (
+            response.headers.get(
+                "content-type",
+                "",
+            )
+            if response is not None
+            else ""
+        ),
+        "response_headers": (
+            dict(response.headers)
+            if response is not None
+            else {}
+        ),
+        "response_text": (
+            response.text
+            if response is not None
+            else ""
+        ),
+        "json": result["json"],
+        "error": result["error"],
+    }
 
 
 # --------------------------------------------------
 # SUBSTANCE SEARCH
 # --------------------------------------------------
-def normalise_substance(item: Any) -> dict:
-    if not isinstance(item, dict):
+def normalise_substance(
+    item: Any,
+) -> dict:
+    if not isinstance(
+        item,
+        dict,
+    ):
         return {
             "Name": "",
             "EC Number": "",
@@ -489,11 +540,16 @@ def normalise_substance(item: Any) -> dict:
         {},
     )
 
-    if not isinstance(substance_index, dict):
+    if not isinstance(
+        substance_index,
+        dict,
+    ):
         substance_index = {}
 
     rml_id = (
-        substance_index.get("rmlId")
+        substance_index.get(
+            "rmlId"
+        )
         or find_first_field(
             item,
             {
@@ -503,7 +559,9 @@ def normalise_substance(item: Any) -> dict:
     )
 
     substance_name = (
-        substance_index.get("rmlName")
+        substance_index.get(
+            "rmlName"
+        )
         or find_first_field(
             item,
             {
@@ -517,8 +575,12 @@ def normalise_substance(item: Any) -> dict:
     )
 
     cas_number = (
-        substance_index.get("rmlCas")
-        or substance_index.get("casNumber")
+        substance_index.get(
+            "rmlCas"
+        )
+        or substance_index.get(
+            "casNumber"
+        )
         or find_first_field(
             item,
             {
@@ -530,9 +592,15 @@ def normalise_substance(item: Any) -> dict:
     )
 
     ec_number = (
-        substance_index.get("ecNumber")
-        or substance_index.get("rmlEc")
-        or substance_index.get("rmlEcNumber")
+        substance_index.get(
+            "ecNumber"
+        )
+        or substance_index.get(
+            "rmlEc"
+        )
+        or substance_index.get(
+            "rmlEcNumber"
+        )
         or find_first_field(
             item,
             {
@@ -544,15 +612,24 @@ def normalise_substance(item: Any) -> dict:
         )
     )
 
-    clean_rml_id = clean_text(rml_id)
+    clean_rml_id = clean_text(
+        rml_id
+    )
 
     return {
-        "Name": clean_text(substance_name),
-        "EC Number": clean_identifier(ec_number),
-        "CAS Number": clean_identifier(cas_number),
+        "Name": clean_text(
+            substance_name
+        ),
+        "EC Number": clean_identifier(
+            ec_number
+        ),
+        "CAS Number": clean_identifier(
+            cas_number
+        ),
         "rmlId": clean_rml_id,
         "URL": (
-            f"{ECHA_BASE_URL}/{clean_rml_id}/overview"
+            f"{ECHA_BASE_URL}/"
+            f"{clean_rml_id}/overview"
             if clean_rml_id
             else ""
         ),
@@ -564,7 +641,9 @@ def substance_result_score(
     result: dict,
     search_text: str,
 ) -> int:
-    query = clean_text(search_text).lower()
+    query = clean_text(
+        search_text
+    ).lower()
 
     name = result.get(
         "Name",
@@ -614,7 +693,9 @@ def substance_result_score(
     ttl=86400,
     show_spinner=False,
 )
-def search_echa_api(search_text: str) -> dict:
+def search_echa_api(
+    search_text: str,
+) -> dict:
     session = create_echa_session()
 
     params = {
@@ -628,7 +709,8 @@ def search_echa_api(search_text: str) -> dict:
         url=SUBSTANCE_SEARCH_API_URL,
         params=params,
         referer=(
-            f"{ECHA_BASE_URL}/substance-search"
+            f"{ECHA_BASE_URL}/"
+            "substance-search"
             f"?searchText={quote(search_text)}"
         ),
     )
@@ -641,9 +723,11 @@ def search_echa_api(search_text: str) -> dict:
     ]
 
     substances.sort(
-        key=lambda item: substance_result_score(
-            item,
-            search_text,
+        key=lambda item: (
+            substance_result_score(
+                item,
+                search_text,
+            )
         ),
         reverse=True,
     )
@@ -685,19 +769,15 @@ def search_echa_api(search_text: str) -> dict:
 
 
 # --------------------------------------------------
-# CLP OVERVIEW REQUEST
+# CLP API REQUESTS
 # --------------------------------------------------
 @st.cache_data(
     ttl=3600,
     show_spinner=False,
 )
-def get_clp_overview_info(rml_id: str) -> dict:
-    """
-    Request the ECHA Classification & Labelling overview information.
-
-    This first test intentionally returns both raw and parsed data.
-    No regulatory information is invented if a field is missing.
-    """
+def get_clp_overview_info(
+    rml_id: str,
+) -> dict:
     session = create_echa_session()
 
     safe_rml_id = quote(
@@ -706,11 +786,13 @@ def get_clp_overview_info(rml_id: str) -> dict:
     )
 
     request_url = (
-        f"{CLP_OVERVIEW_INFO_URL}/{safe_rml_id}"
+        f"{CLP_OVERVIEW_INFO_URL}/"
+        f"{safe_rml_id}"
     )
 
     referer = (
-        f"{ECHA_BASE_URL}/{safe_rml_id}/"
+        f"{ECHA_BASE_URL}/"
+        f"{safe_rml_id}/"
         "classification-and-labelling"
     )
 
@@ -720,47 +802,151 @@ def get_clp_overview_info(rml_id: str) -> dict:
         referer=referer,
     )
 
-    response = result["response"]
-
-    response_text = (
-        response.text
-        if response is not None
-        else ""
+    return build_response_result(
+        request_url=request_url,
+        referer=referer,
+        result=result,
     )
 
-    response_headers = (
-        dict(response.headers)
-        if response is not None
-        else {}
+
+@st.cache_data(
+    ttl=3600,
+    show_spinner=False,
+)
+def get_clp_classification_details(
+    classification_id: str,
+    classification_type: str,
+    rml_id: str,
+) -> dict:
+    session = create_echa_session()
+
+    safe_classification_id = quote(
+        clean_text(classification_id),
+        safe="",
     )
 
-    return {
-        "request_method": "GET",
-        "request_url": request_url,
-        "referer": referer,
-        "status": (
-            response.status_code
-            if response is not None
-            else None
-        ),
-        "final_url": (
-            response.url
-            if response is not None
-            else ""
-        ),
-        "content_type": (
-            response.headers.get(
-                "content-type",
-                "",
-            )
-            if response is not None
-            else ""
-        ),
-        "response_headers": response_headers,
-        "response_text": response_text,
-        "json": result["json"],
-        "error": result["error"],
-    }
+    normalised_type = clean_text(
+        classification_type
+    ).lower()
+
+    if normalised_type in {
+        "harmonised",
+        "harmonized",
+    }:
+        endpoint_type = "harmonised"
+
+    else:
+        endpoint_type = "industry"
+
+    request_url = (
+        f"{CLP_OVERVIEW_CLASSIFICATIONS_URL}/"
+        f"{endpoint_type}/"
+        f"{safe_classification_id}"
+    )
+
+    safe_rml_id = quote(
+        clean_text(rml_id),
+        safe="",
+    )
+
+    referer = (
+        f"{ECHA_BASE_URL}/"
+        f"{safe_rml_id}/"
+        "classification-and-labelling"
+    )
+
+    result = echa_get(
+        session=session,
+        url=request_url,
+        referer=referer,
+    )
+
+    response_result = build_response_result(
+        request_url=request_url,
+        referer=referer,
+        result=result,
+    )
+
+    response_result[
+        "classification_id"
+    ] = safe_classification_id
+
+    response_result[
+        "classification_type"
+    ] = endpoint_type
+
+    return response_result
+
+
+def parse_overview_items(
+    response_json: Any,
+) -> list:
+    rows = []
+
+    for item in extract_items(
+        response_json
+    ):
+        if not isinstance(
+            item,
+            dict,
+        ):
+            continue
+
+        signal_word = item.get(
+            "signalWord",
+            {},
+        )
+
+        if not isinstance(
+            signal_word,
+            dict,
+        ):
+            signal_word = {}
+
+        rows.append(
+            {
+                "classificationId": clean_text(
+                    item.get(
+                        "classificationId"
+                    )
+                ),
+                "rmlId": clean_text(
+                    item.get(
+                        "rmlId"
+                    )
+                ),
+                "Type": clean_text(
+                    item.get(
+                        "type"
+                    )
+                ),
+                "Industry classifications": (
+                    item.get(
+                        "totalIndustryClassifications"
+                    )
+                ),
+                "Harmonised classifications": (
+                    item.get(
+                        "totalHarmonisedClassifications"
+                    )
+                ),
+                "Signal word code": clean_text(
+                    signal_word.get(
+                        "signalWordCode"
+                    )
+                ),
+                "Signal word": clean_text(
+                    signal_word.get(
+                        "signalWordText"
+                    )
+                ),
+                "Display order": item.get(
+                    "displayOrder"
+                ),
+            }
+        )
+
+    return rows
 
 
 # --------------------------------------------------
@@ -770,20 +956,29 @@ DEFAULT_STATE = {
     "clp_search_results": [],
     "clp_selected_index": 0,
     "clp_search_debug": None,
-    "clp_result": None,
-    "clp_result_rml_id": "",
+    "clp_overview_result": None,
+    "clp_overview_rml_id": "",
+    "clp_detail_result": None,
+    "clp_detail_classification_id": "",
 }
 
-for key, default_value in DEFAULT_STATE.items():
+for key, default_value in (
+    DEFAULT_STATE.items()
+):
     if key not in st.session_state:
-        st.session_state[key] = default_value
+        st.session_state[
+            key
+        ] = default_value
 
 
 # --------------------------------------------------
 # SEARCH FORM
 # --------------------------------------------------
 search_query = st.text_input(
-    "CAS number, EC number, substance name, or rmlId",
+    (
+        "CAS number, EC number, "
+        "substance name, or rmlId"
+    ),
     value="128-37-0",
     placeholder="For example: 128-37-0",
 )
@@ -802,19 +997,28 @@ if search_button:
 
     if not clean_query:
         st.error(
-            "Please enter a CAS number, EC number, "
-            "substance name, or rmlId."
+            "Please enter a CAS number, "
+            "EC number, substance name, "
+            "or rmlId."
         )
         st.stop()
 
     if (
-        looks_like_cas(clean_query)
-        and not validate_cas_locally(clean_query)
+        looks_like_cas(
+            clean_query
+        )
+        and not validate_cas_locally(
+            clean_query
+        )
     ):
-        st.error("Invalid CAS number.")
+        st.error(
+            "Invalid CAS number."
+        )
         st.stop()
 
-    with st.spinner("Searching ECHA CHEM..."):
+    with st.spinner(
+        "Searching ECHA CHEM..."
+    ):
         search_result = search_echa_api(
             clean_query
         )
@@ -832,11 +1036,19 @@ if search_button:
     ] = 0
 
     st.session_state[
-        "clp_result"
+        "clp_overview_result"
     ] = None
 
     st.session_state[
-        "clp_result_rml_id"
+        "clp_overview_rml_id"
+    ] = ""
+
+    st.session_state[
+        "clp_detail_result"
+    ] = None
+
+    st.session_state[
+        "clp_detail_classification_id"
     ] = ""
 
     if search_result["error"]:
@@ -844,9 +1056,17 @@ if search_button:
             "The ECHA substance search "
             "could not be completed."
         )
-        st.info(search_result["error"])
 
-    elif search_result["response_status"] != 200:
+        st.info(
+            search_result["error"]
+        )
+
+    elif (
+        search_result[
+            "response_status"
+        ]
+        != 200
+    ):
         st.error(
             "ECHA returned HTTP "
             f"{search_result['response_status']} "
@@ -861,13 +1081,13 @@ if search_button:
 
     else:
         st.warning(
-            "ECHA was reached, but no matching "
-            "substance was found."
+            "ECHA was reached, but no "
+            "matching substance was found."
         )
 
 
 # --------------------------------------------------
-# SEARCH DEBUG INFORMATION
+# SEARCH DIAGNOSTICS
 # --------------------------------------------------
 search_debug = st.session_state[
     "clp_search_debug"
@@ -878,26 +1098,29 @@ if search_debug is not None:
         "Substance search diagnostics",
         expanded=False,
     ):
-        debug_columns = st.columns(3)
+        diagnostic_columns = st.columns(3)
 
-        debug_columns[0].metric(
+        diagnostic_columns[0].metric(
             "HTTP status",
             (
-                search_debug["response_status"]
-                if search_debug["response_status"]
-                is not None
+                search_debug[
+                    "response_status"
+                ]
+                if search_debug[
+                    "response_status"
+                ] is not None
                 else "No response"
             ),
         )
 
-        debug_columns[1].metric(
+        diagnostic_columns[1].metric(
             "Results",
             len(
                 search_debug["results"]
             ),
         )
 
-        debug_columns[2].metric(
+        diagnostic_columns[2].metric(
             "Content type",
             (
                 search_debug[
@@ -909,30 +1132,36 @@ if search_debug is not None:
 
         st.write(
             "**Requested URL:**",
-            search_debug["response_url"],
+            search_debug[
+                "response_url"
+            ],
         )
 
         st.write(
             "**Parameters:**"
         )
+
         st.json(
             search_debug["params"],
             expanded=False,
         )
 
-        if search_debug["json"] is not None:
+        if (
+            search_debug["json"]
+            is not None
+        ):
             st.write(
                 "**Raw substance search JSON:**"
             )
+
             st.json(
                 search_debug["json"],
                 expanded=False,
             )
 
-        elif search_debug["response_text"]:
-            st.write(
-                "**Raw substance search response:**"
-            )
+        elif search_debug[
+            "response_text"
+        ]:
             st.code(
                 search_debug[
                     "response_text"
@@ -951,14 +1180,20 @@ search_results = st.session_state[
 ]
 
 if search_results:
-    st.subheader("1. ECHA search results")
+    st.subheader(
+        "1. ECHA search results"
+    )
 
     display_dataframe = pd.DataFrame(
         [
             {
                 "Name": result["Name"],
-                "EC Number": result["EC Number"],
-                "CAS Number": result["CAS Number"],
+                "EC Number": result[
+                    "EC Number"
+                ],
+                "CAS Number": result[
+                    "CAS Number"
+                ],
                 "rmlId": result["rmlId"],
             }
             for result in search_results
@@ -975,8 +1210,8 @@ if search_results:
         selected_index = 0
 
         st.info(
-            "Only one result was found and "
-            "has been selected automatically."
+            "Only one result was found "
+            "and selected automatically."
         )
 
     else:
@@ -1003,8 +1238,10 @@ if search_results:
             index=safe_index,
         )
 
-        selected_index = result_labels.index(
-            selected_label
+        selected_index = (
+            result_labels.index(
+                selected_label
+            )
         )
 
         st.session_state[
@@ -1015,39 +1252,46 @@ if search_results:
         selected_index
     ]
 
-    st.subheader("2. Selected substance")
+    st.subheader(
+        "2. Selected substance"
+    )
 
     selected_columns = st.columns(4)
 
     selected_columns[0].metric(
         "Name",
-        selected_row["Name"] or "Unknown",
+        selected_row["Name"]
+        or "Unknown",
     )
 
     selected_columns[1].metric(
         "EC Number",
-        selected_row["EC Number"] or "Unknown",
+        selected_row["EC Number"]
+        or "Unknown",
     )
 
     selected_columns[2].metric(
         "CAS Number",
-        selected_row["CAS Number"] or "Unknown",
+        selected_row["CAS Number"]
+        or "Unknown",
     )
 
     selected_columns[3].metric(
         "rmlId",
-        selected_row["rmlId"] or "Unknown",
+        selected_row["rmlId"]
+        or "Unknown",
     )
 
     if selected_row["URL"]:
         st.markdown(
-            "[Open selected substance in ECHA CHEM]"
+            "[Open selected substance "
+            "in ECHA CHEM]"
             f"({selected_row['URL']})"
         )
 
 
 # --------------------------------------------------
-# CLP REQUEST
+# FETCH CLP OVERVIEW
 # --------------------------------------------------
 if selected_row is not None:
     selected_rml_id = clean_text(
@@ -1059,19 +1303,13 @@ if selected_row is not None:
 
     if not selected_rml_id:
         st.warning(
-            "The selected substance does not "
-            "contain an rmlId."
+            "The selected substance "
+            "does not contain an rmlId."
         )
 
     else:
         st.subheader(
-            "3. Classification & Labelling test"
-        )
-
-        st.write(
-            "The button below requests the ECHA "
-            "Classification & Labelling overview "
-            "for the selected rmlId."
+            "3. CLP overview"
         )
 
         if st.button(
@@ -1079,153 +1317,425 @@ if selected_row is not None:
             type="primary",
         ):
             with st.spinner(
-                "Requesting ECHA Classification "
-                "& Labelling information..."
+                "Requesting the ECHA "
+                "CLP overview..."
             ):
-                clp_result = get_clp_overview_info(
-                    selected_rml_id
+                overview_result = (
+                    get_clp_overview_info(
+                        selected_rml_id
+                    )
                 )
 
             st.session_state[
-                "clp_result"
-            ] = clp_result
+                "clp_overview_result"
+            ] = overview_result
 
             st.session_state[
-                "clp_result_rml_id"
+                "clp_overview_rml_id"
             ] = selected_rml_id
 
+            st.session_state[
+                "clp_detail_result"
+            ] = None
+
+            st.session_state[
+                "clp_detail_classification_id"
+            ] = ""
+
 
 # --------------------------------------------------
-# DISPLAY CLP RESPONSE
+# DISPLAY OVERVIEW
 # --------------------------------------------------
-clp_result = st.session_state[
-    "clp_result"
+overview_result = st.session_state[
+    "clp_overview_result"
 ]
 
-clp_result_rml_id = st.session_state[
-    "clp_result_rml_id"
-]
+overview_rows = []
 
-if clp_result is not None:
+if overview_result is not None:
     st.divider()
 
     st.subheader(
-        "4. ECHA CLP response"
+        "4. ECHA CLP overview response"
     )
 
-    status_columns = st.columns(4)
+    overview_status_columns = (
+        st.columns(4)
+    )
 
-    status_columns[0].metric(
+    overview_status_columns[0].metric(
         "HTTP method",
-        clp_result["request_method"],
+        overview_result[
+            "request_method"
+        ],
     )
 
-    status_columns[1].metric(
+    overview_status_columns[1].metric(
         "HTTP status",
         (
-            clp_result["status"]
-            if clp_result["status"] is not None
+            overview_result["status"]
+            if overview_result["status"]
+            is not None
             else "No response"
         ),
     )
 
-    status_columns[2].metric(
+    overview_status_columns[2].metric(
         "JSON received",
         (
             "Yes"
-            if clp_result["json"] is not None
+            if overview_result["json"]
+            is not None
             else "No"
         ),
     )
 
-    status_columns[3].metric(
+    overview_status_columns[3].metric(
         "rmlId",
-        clp_result_rml_id or "Unknown",
+        st.session_state[
+            "clp_overview_rml_id"
+        ]
+        or "Unknown",
     )
 
     st.write(
         "**Requested endpoint:**",
-        clp_result["request_url"],
+        overview_result[
+            "request_url"
+        ],
     )
 
-    st.write(
-        "**Final response URL:**",
-        clp_result["final_url"] or "-",
-    )
-
-    st.write(
-        "**Content type:**",
-        clp_result["content_type"] or "-",
-    )
-
-    if clp_result["error"]:
+    if overview_result["error"]:
         st.error(
-            "The ECHA CLP request could "
-            "not be completed."
+            "The ECHA CLP overview "
+            "request failed."
         )
 
-        st.info(clp_result["error"])
+        st.info(
+            overview_result["error"]
+        )
 
-    elif clp_result["status"] == 200:
-        if clp_result["json"] is not None:
-            st.success(
-                "ECHA returned a successful JSON response."
+    elif overview_result["status"] != 200:
+        st.error(
+            "ECHA returned HTTP "
+            f"{overview_result['status']} "
+            "for the CLP overview."
+        )
+
+    elif overview_result["json"] is None:
+        st.warning(
+            "ECHA returned HTTP 200, "
+            "but no JSON could be parsed."
+        )
+
+    else:
+        st.success(
+            "ECHA returned a successful "
+            "CLP overview response."
+        )
+
+        overview_rows = parse_overview_items(
+            overview_result["json"]
+        )
+
+        if overview_rows:
+            overview_dataframe = (
+                pd.DataFrame(
+                    overview_rows
+                )
+            )
+
+            st.dataframe(
+                overview_dataframe,
+                use_container_width=True,
+                hide_index=True,
             )
 
         else:
             st.warning(
-                "ECHA returned HTTP 200, but the response "
-                "could not be parsed as JSON."
+                "No classification overview "
+                "items were returned."
             )
 
-    elif clp_result["status"] == 403:
-        st.error(
-            "ECHA returned HTTP 403. Access to this "
-            "endpoint was refused."
+    with st.expander(
+        "Complete raw overview JSON",
+        expanded=False,
+    ):
+        if overview_result[
+            "json"
+        ] is not None:
+            st.json(
+                overview_result["json"],
+                expanded=True,
+            )
+
+        elif overview_result[
+            "response_text"
+        ]:
+            st.code(
+                overview_result[
+                    "response_text"
+                ][:50000],
+                language=None,
+            )
+
+
+# --------------------------------------------------
+# SELECT AND FETCH CLASSIFICATION DETAILS
+# --------------------------------------------------
+if overview_rows:
+    valid_overview_rows = [
+        row
+        for row in overview_rows
+        if row["classificationId"]
+    ]
+
+    if valid_overview_rows:
+        st.subheader(
+            "5. Classification detail request"
         )
 
-    elif clp_result["status"] == 404:
-        st.error(
-            "ECHA returned HTTP 404. The tested endpoint "
-            "or selected rmlId was not found."
+        detail_labels = [
+            (
+                f"ID {row['classificationId']}"
+                f" | Type {row['Type'] or 'unknown'}"
+                f" | Signal word "
+                f"{row['Signal word'] or '-'}"
+            )
+            for row in valid_overview_rows
+        ]
+
+        selected_detail_label = (
+            st.selectbox(
+                "Select overview classification",
+                options=detail_labels,
+            )
         )
 
-    elif clp_result["status"] == 429:
+        selected_detail_index = (
+            detail_labels.index(
+                selected_detail_label
+            )
+        )
+
+        selected_overview_row = (
+            valid_overview_rows[
+                selected_detail_index
+            ]
+        )
+
+        st.write(
+            "**Classification ID:**",
+            selected_overview_row[
+                "classificationId"
+            ],
+        )
+
+        st.write(
+            "**Classification type:**",
+            selected_overview_row[
+                "Type"
+            ]
+            or "Unknown",
+        )
+
+        if st.button(
+            "Fetch classification details",
+            type="primary",
+        ):
+            with st.spinner(
+                "Requesting ECHA "
+                "classification details..."
+            ):
+                detail_result = (
+                    get_clp_classification_details(
+                        classification_id=(
+                            selected_overview_row[
+                                "classificationId"
+                            ]
+                        ),
+                        classification_type=(
+                            selected_overview_row[
+                                "Type"
+                            ]
+                        ),
+                        rml_id=(
+                            st.session_state[
+                                "clp_overview_rml_id"
+                            ]
+                        ),
+                    )
+                )
+
+            st.session_state[
+                "clp_detail_result"
+            ] = detail_result
+
+            st.session_state[
+                "clp_detail_classification_id"
+            ] = selected_overview_row[
+                "classificationId"
+            ]
+
+
+# --------------------------------------------------
+# DISPLAY CLASSIFICATION DETAILS
+# --------------------------------------------------
+detail_result = st.session_state[
+    "clp_detail_result"
+]
+
+if detail_result is not None:
+    st.divider()
+
+    st.subheader(
+        "6. Classification detail response"
+    )
+
+    detail_status_columns = (
+        st.columns(4)
+    )
+
+    detail_status_columns[0].metric(
+        "HTTP method",
+        detail_result[
+            "request_method"
+        ],
+    )
+
+    detail_status_columns[1].metric(
+        "HTTP status",
+        (
+            detail_result["status"]
+            if detail_result["status"]
+            is not None
+            else "No response"
+        ),
+    )
+
+    detail_status_columns[2].metric(
+        "JSON received",
+        (
+            "Yes"
+            if detail_result["json"]
+            is not None
+            else "No"
+        ),
+    )
+
+    detail_status_columns[3].metric(
+        "Classification ID",
+        detail_result[
+            "classification_id"
+        ]
+        or "Unknown",
+    )
+
+    st.write(
+        "**Classification type:**",
+        detail_result[
+            "classification_type"
+        ],
+    )
+
+    st.write(
+        "**Requested endpoint:**",
+        detail_result[
+            "request_url"
+        ],
+    )
+
+    st.write(
+        "**Final response URL:**",
+        detail_result[
+            "final_url"
+        ]
+        or "-",
+    )
+
+    st.write(
+        "**Content type:**",
+        detail_result[
+            "content_type"
+        ]
+        or "-",
+    )
+
+    if detail_result["error"]:
         st.error(
-            "ECHA returned HTTP 429. Too many requests "
-            "were made. Wait before testing again."
+            "The classification detail "
+            "request could not be completed."
+        )
+
+        st.info(
+            detail_result["error"]
+        )
+
+    elif detail_result["status"] == 200:
+        if detail_result["json"] is not None:
+            st.success(
+                "ECHA returned a successful "
+                "classification detail response."
+            )
+
+        else:
+            st.warning(
+                "ECHA returned HTTP 200, "
+                "but the response was not JSON."
+            )
+
+    elif detail_result["status"] == 403:
+        st.error(
+            "ECHA returned HTTP 403 for "
+            "the classification detail endpoint."
+        )
+
+    elif detail_result["status"] == 404:
+        st.error(
+            "ECHA returned HTTP 404 for "
+            "the classification detail endpoint."
+        )
+
+    elif detail_result["status"] == 429:
+        st.error(
+            "ECHA returned HTTP 429. "
+            "Wait before trying again."
         )
 
     else:
         st.error(
             "ECHA returned HTTP "
-            f"{clp_result['status']}."
+            f"{detail_result['status']}."
         )
 
-    response_json = clp_result["json"]
+    detail_json = detail_result[
+        "json"
+    ]
 
-    if response_json is not None:
-        flattened_rows = flatten_json(
-            response_json
+    if detail_json is not None:
+        detail_rows = flatten_json(
+            detail_json
         )
 
-        flattened_dataframe = pd.DataFrame(
-            flattened_rows
+        detail_dataframe = pd.DataFrame(
+            detail_rows
         )
 
-        st.subheader(
-            "Possible useful CLP information"
-        )
-
-        if not flattened_dataframe.empty:
-            clp_mask = (
-                flattened_dataframe["Path"]
-                .astype(str)
-                .apply(is_possible_clp_field)
+        if not detail_dataframe.empty:
+            st.subheader(
+                "Possible CLP fields"
             )
 
-            possible_clp_dataframe = (
-                flattened_dataframe[
+            clp_mask = (
+                detail_dataframe["Path"]
+                .astype(str)
+                .apply(
+                    is_possible_clp_field
+                )
+            )
+
+            clp_dataframe = (
+                detail_dataframe[
                     clp_mask
                 ]
                 .copy()
@@ -1234,126 +1744,70 @@ if clp_result is not None:
                 )
             )
 
-            if not possible_clp_dataframe.empty:
+            if not clp_dataframe.empty:
                 st.dataframe(
-                    possible_clp_dataframe,
+                    clp_dataframe,
                     use_container_width=True,
                     hide_index=True,
                 )
 
             else:
                 st.info(
-                    "No obvious CLP fields were found by "
-                    "the preliminary field-name filter. "
-                    "The full JSON is still shown below."
-                )
-
-            st.subheader(
-                "Possible identifiers returned by ECHA"
-            )
-
-            identifier_mask = (
-                flattened_dataframe["Path"]
-                .astype(str)
-                .apply(
-                    is_possible_identifier_field
-                )
-            )
-
-            identifier_dataframe = (
-                flattened_dataframe[
-                    identifier_mask
-                ]
-                .copy()
-                .reset_index(
-                    drop=True
-                )
-            )
-
-            if not identifier_dataframe.empty:
-                st.dataframe(
-                    identifier_dataframe,
-                    use_container_width=True,
-                    hide_index=True,
-                )
-
-            else:
-                st.info(
-                    "No obvious ID fields were found "
-                    "in this response."
+                    "The preliminary field filter "
+                    "did not detect obvious CLP fields. "
+                    "Review the complete JSON below."
                 )
 
             with st.expander(
-                "All flattened JSON fields",
+                "All flattened detail fields",
                 expanded=False,
             ):
-                field_filter = st.text_input(
-                    "Filter JSON paths",
-                    key="clp_json_path_filter",
-                    placeholder=(
-                        "For example: classification, "
-                        "hazard, pictogram or id"
-                    ),
-                )
-
-                displayed_dataframe = (
-                    flattened_dataframe.copy()
-                )
-
-                if field_filter.strip():
-                    displayed_dataframe = (
-                        displayed_dataframe[
-                            displayed_dataframe[
-                                "Path"
-                            ]
-                            .astype(str)
-                            .str.contains(
-                                field_filter.strip(),
-                                case=False,
-                                regex=False,
-                                na=False,
-                            )
-                        ]
-                    )
-
                 st.dataframe(
-                    displayed_dataframe,
+                    detail_dataframe,
                     use_container_width=True,
                     hide_index=True,
                 )
 
         with st.expander(
-            "Complete raw CLP JSON response",
+            "Complete raw classification detail JSON",
             expanded=True,
         ):
             st.json(
-                response_json,
+                detail_json,
                 expanded=True,
             )
 
-        raw_json_download = json.dumps(
-            response_json,
+        detail_download = json.dumps(
+            detail_json,
             ensure_ascii=False,
             indent=2,
-        ).encode("utf-8")
+        ).encode(
+            "utf-8"
+        )
 
         st.download_button(
-            label="Download raw CLP response as JSON",
-            data=raw_json_download,
+            label=(
+                "Download classification "
+                "details as JSON"
+            ),
+            data=detail_download,
             file_name=(
-                "ECHA_CLP_overview_"
-                f"{clp_result_rml_id}.json"
+                "ECHA_CLP_classification_"
+                f"{detail_result['classification_id']}"
+                ".json"
             ),
             mime="application/json",
         )
 
-    elif clp_result["response_text"]:
+    elif detail_result[
+        "response_text"
+    ]:
         with st.expander(
-            "Raw non-JSON response",
+            "Raw non-JSON detail response",
             expanded=True,
         ):
             st.code(
-                clp_result[
+                detail_result[
                     "response_text"
                 ][:50000],
                 language=None,
@@ -1361,18 +1815,21 @@ if clp_result is not None:
 
     else:
         st.warning(
-            "ECHA returned no readable response body."
+            "ECHA returned no readable "
+            "classification detail body."
         )
 
     with st.expander(
-        "Response headers",
+        "Classification response headers",
         expanded=False,
     ):
-        safe_response_headers = {
+        safe_headers = {
             str(key): str(value)
-            for key, value in clp_result[
-                "response_headers"
-            ].items()
+            for key, value in (
+                detail_result[
+                    "response_headers"
+                ].items()
+            )
             if str(key).lower() not in {
                 "set-cookie",
                 "cookie",
@@ -1382,7 +1839,7 @@ if clp_result is not None:
         }
 
         st.json(
-            safe_response_headers,
+            safe_headers,
             expanded=False,
         )
 
@@ -1397,12 +1854,16 @@ if st.button(
 ):
     st.cache_data.clear()
 
-    for key, default_value in DEFAULT_STATE.items():
-        st.session_state[key] = default_value
+    for key, default_value in (
+        DEFAULT_STATE.items()
+    ):
+        st.session_state[
+            key
+        ] = default_value
 
     st.success(
-        "The CLP test cache and selections "
-        "have been cleared."
+        "The CLP test cache and "
+        "selections have been cleared."
     )
 
     st.rerun()
