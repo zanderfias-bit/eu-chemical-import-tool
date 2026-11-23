@@ -1499,47 +1499,7 @@ if selected_row is not None:
                 st.columns(4)
             )
 
-            registrant_columns[0].metric(
-                "HTTP",
-                registrant_result[
-                    "status"
-                ],
-            )
-
-            registrant_columns[1].metric(
-                "Total reported",
-                registrant_state.get(
-                    "totalItems",
-                    len(
-                        registrants
-                    ),
-                ),
-            )
-
-            registrant_columns[2].metric(
-                "Rows loaded",
-                len(
-                    registrants
-                ),
-            )
-
-            registrant_columns[3].metric(
-                "Pages loaded",
-                registrant_result[
-                    "pages_loaded"
-                ],
-            )
-
-            st.write(
-                "**Final API URL:**"
-            )
-
-            st.code(
-                registrant_result[
-                    "url"
-                ],
-                language=None,
-            )
+            
 
             if registrants:
                 registrants_dataframe = (
