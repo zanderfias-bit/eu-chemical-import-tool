@@ -335,7 +335,8 @@ def find_first_field(
 def flatten_json(
     value: Any,
     parent_path: str = "",
-) -> list"""
+) -> list:
+    """
     Convert nested JSON into a table containing one row
     for every scalar value.
     """
