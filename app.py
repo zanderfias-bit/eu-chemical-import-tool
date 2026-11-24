@@ -678,6 +678,87 @@ if search_results:
 
 
 # --------------------------------------------------
+# AUTOMATIC REGISTRANTS API LOOKUP
+# --------------------------------------------------
+if selected_row is not None:
+    selected_rml_id = selected_row.get("rmlId", "")
+    if not selected_rml_id:
+        st.warning("The selected ECHA result does not contain an rmlId.")
+    else:
+        if st.session_state["registrant_rml_id"] != selected_rml_id:
+            with st.spinner("Loading ECHA registrants..."):
+                st.session_state["registrant_result"] = get_echa_registrants(
+                    selected_rml_id
+                )
+            st.session_state["registrant_rml_id"] = selected_rml_id
+
+        registrant_result = st.session_state["registrant_result"]
+        st.subheader("REACH Registrants")
+
+        if registrant_result is None:
+            st.warning("No registrant result is available.")
+        elif registrant_result["error"]:
+            st.error("The ECHA registrants request could not be completed.")
+            st.info(registrant_result["error"])
+        elif registrant_result["status"] != 200:
+            st.error(
+                f"ECHA returned HTTP {registrant_result['status']} "
+                "for the registrants request."
+            )
+            with st.expander("Raw registrants response", expanded=False):
+                st.code(registrant_result["text"][:30000], language=None)
+        else:
+            registrants = registrant_result["registrants"]
+            if registrants:
+                registrants_dataframe = pd.DataFrame(registrants)
+                status_options = sorted(
+                    value
+                    for value in registrants_dataframe["Status"].dropna().unique().tolist()
+                    if str(value).strip()
+                )
+                selected_statuses = st.multiselect(
+                    "Filter by registration status",
+                    options=status_options,
+                    default=status_options,
+                )
+                show_confidential = st.checkbox(
+                    "Show confidential or non-publishable registrants",
+                    value=True,
+                )
+                filtered_registrants = registrants_dataframe.copy()
+                if selected_statuses:
+                    filtered_registrants = filtered_registrants[
+                        filtered_registrants["Status"].isin(selected_statuses)
+                    ]
+                else:
+                    filtered_registrants = filtered_registrants.iloc[0:0]
+
+                if not show_confidential:
+                    confidential_names = {
+                        "[Confidential]",
+                        "Only representative (No publishable name)",
+                    }
+                    filtered_registrants = filtered_registrants[
+                        ~filtered_registrants["Registrant"].isin(confidential_names)
+                    ]
+
+                filtered_registrants = filtered_registrants.reset_index(drop=True)
+                st.dataframe(
+                    filtered_registrants,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.download_button(
+                    label="Download registrants as CSV",
+                    data=filtered_registrants.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"ECHA_registrants_{selected_rml_id}.csv",
+                    mime="text/csv",
+                )
+            else:
+                st.warning("No registrants were returned for the selected substance.")
+
+
+# --------------------------------------------------
 # AUTOMATIC CLP LOOKUP
 # --------------------------------------------------
 if selected_row is not None:
@@ -782,87 +863,6 @@ if selected_row is not None:
                         "**Pictogram HTTP status:**",
                         clp_result["pictograms"]["status"],
                     )
-
-
-# --------------------------------------------------
-# AUTOMATIC REGISTRANTS API LOOKUP
-# --------------------------------------------------
-if selected_row is not None:
-    selected_rml_id = selected_row.get("rmlId", "")
-    if not selected_rml_id:
-        st.warning("The selected ECHA result does not contain an rmlId.")
-    else:
-        if st.session_state["registrant_rml_id"] != selected_rml_id:
-            with st.spinner("Loading ECHA registrants..."):
-                st.session_state["registrant_result"] = get_echa_registrants(
-                    selected_rml_id
-                )
-            st.session_state["registrant_rml_id"] = selected_rml_id
-
-        registrant_result = st.session_state["registrant_result"]
-        st.subheader("REACH Registrants")
-
-        if registrant_result is None:
-            st.warning("No registrant result is available.")
-        elif registrant_result["error"]:
-            st.error("The ECHA registrants request could not be completed.")
-            st.info(registrant_result["error"])
-        elif registrant_result["status"] != 200:
-            st.error(
-                f"ECHA returned HTTP {registrant_result['status']} "
-                "for the registrants request."
-            )
-            with st.expander("Raw registrants response", expanded=False):
-                st.code(registrant_result["text"][:30000], language=None)
-        else:
-            registrants = registrant_result["registrants"]
-            if registrants:
-                registrants_dataframe = pd.DataFrame(registrants)
-                status_options = sorted(
-                    value
-                    for value in registrants_dataframe["Status"].dropna().unique().tolist()
-                    if str(value).strip()
-                )
-                selected_statuses = st.multiselect(
-                    "Filter by registration status",
-                    options=status_options,
-                    default=status_options,
-                )
-                show_confidential = st.checkbox(
-                    "Show confidential or non-publishable registrants",
-                    value=True,
-                )
-                filtered_registrants = registrants_dataframe.copy()
-                if selected_statuses:
-                    filtered_registrants = filtered_registrants[
-                        filtered_registrants["Status"].isin(selected_statuses)
-                    ]
-                else:
-                    filtered_registrants = filtered_registrants.iloc[0:0]
-
-                if not show_confidential:
-                    confidential_names = {
-                        "[Confidential]",
-                        "Only representative (No publishable name)",
-                    }
-                    filtered_registrants = filtered_registrants[
-                        ~filtered_registrants["Registrant"].isin(confidential_names)
-                    ]
-
-                filtered_registrants = filtered_registrants.reset_index(drop=True)
-                st.dataframe(
-                    filtered_registrants,
-                    use_container_width=True,
-                    hide_index=True,
-                )
-                st.download_button(
-                    label="Download registrants as CSV",
-                    data=filtered_registrants.to_csv(index=False).encode("utf-8-sig"),
-                    file_name=f"ECHA_registrants_{selected_rml_id}.csv",
-                    mime="text/csv",
-                )
-            else:
-                st.warning("No registrants were returned for the selected substance.")
 
 
 # --------------------------------------------------
